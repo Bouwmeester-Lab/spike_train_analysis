@@ -103,6 +103,10 @@ class MEAData():
 
 
     def parse_processed_data(self) -> None:
+        if self.data['mode'] == 'minimal':
+            print('processed data saved in minimal mode cannot be reloaded in MEAData object')
+            return 
+        
         self.pressure = self.data['pressure']
         self.file_ID = self.data['file_ID']
         self.N_units = self.data['N_units']
@@ -199,25 +203,35 @@ class MEAData():
 
 
     def print_data_overview(self,
-                            spacing : int = 18) -> None:
+                            spacing : int = 18,
+                            value_length : int = 140) -> None:
         '''
         Prints an overview of the MEA data. 
         '''
 
         keys = list(self.data.keys())
 
+        # PRINT HEADER
+        print('KEY'.ljust(spacing),
+              'SHAPE'.ljust(spacing),
+              'TYPE'.ljust(spacing),
+              'VALUE')
+
         for key in keys:
             content = self.data[key]
             try:
-                print(key.ljust(spacing),
-                    str(np.shape(content)).ljust(spacing),
-                    str(type(content)))
+                content_shape = str(np.shape(content))
             except ValueError:
-                print(key.ljust(spacing),
-                    'inhomogeneous'.ljust(spacing),
-                    str(type(content)))
+                content_shape = 'inhomogeneous'
+
+            content_type = type(content).__name__
+            print(key.ljust(spacing),
+                  content_shape.ljust(spacing),
+                  content_type.ljust(spacing),
+                  repr(content).replace('\n', '').ljust(value_length)[:value_length])
 
         if self.file_type == 'raw':
+            print()
             print('Units consists of an array of dictionary with more data', end='\n\n')
 
             units = self.data['units'] 
@@ -225,10 +239,17 @@ class MEAData():
 
             for key in units_keys:
                 content = units[0][key]
+                try:
+                    content_shape = str(np.shape(content))
+                except ValueError:
+                    content_shape = 'inhomogeneous'
+
+                content_type = type(content).__name__    
                 print(key.ljust(spacing),
-                      str(np.shape(content)).ljust(spacing),
-                      str(type(content)))
-                
+                      content_shape.ljust(spacing),
+                      content_type.ljust(spacing),
+                      repr(content).replace('\n', '').ljust(value_length)[:value_length])
+        print()       
         print(f'Total measurement time: {int(self.T_total//60)} min {round(self.T_total%60, 3)} s', end='\n\n')
 
 
@@ -661,77 +682,83 @@ class MEAData():
                                                 'Cramer-von Mises_fit',
                                                 'Wasserstein_fit',
                                                 'all'] = 'Wasserstein_fit',
+                               overwrite : bool = False,
                                plot_sim_hist = True) -> float:
     
         if self.sttc is None:
             print('Compute STTC on data with dt = 0.05...')
-            sttc = self.compute_sttc(dt_max, dt_min)
+            sttcs = self.compute_sttc(dt_max, dt_min)
         elif type(self.sttc) == list:
-            sttc = self.sttc[-1]
+            if overwrite:
+                sttcs = self.sttc[-1]
+            else:
+                sttcs = self.sttc
         else:
-            sttc = self.sttc
-        result = sttc[np.triu_indices(np.shape(sttc)[0], k=1)]
+            sttcs = [self.sttc]
 
-        if self.sim is None:
-            print('Compute STTC on random simulation with dt = 0.05...')
+        self.correlation = []
+            
+        for sttc in sttcs:
+            result = sttc[np.triu_indices(np.shape(sttcs)[0], k=1)]
+
+            print('Performing simulation...')
             self.get_sim(dt_max, dt_min)
+            
+            sim = self.sttc_sim[np.triu_indices(np.shape(self.sttc_sim)[0], k=1)]
+
+            total_counts = len(result)
+
+            if total_counts != len(sim):
+                print('Length of data and sim don\'t match up.')
+
+            bin_min = min([np.min(result), np.min(sim)])
+            bin_max = max([np.max(result), np.max(sim)])
+
+            bin_size = (bin_max - bin_min) / N_bins
+            bin_edges = np.arange(bin_min, bin_max + bin_size, bin_size)
+            bin_centers = bin_edges[1:] - bin_size / 2
+
+            counts, _ = np.histogram(result, bins=bin_edges)
+            counts_sim, _ = np.histogram(sim, bins=bin_edges)
+
+            counts_norm = counts / total_counts / bin_size
+            counts_sim_norm = counts_sim / total_counts / bin_size
+
+            # fit gauss to simulation
+            popt, pcov = curve_fit(stt._gauss_norm, bin_centers, counts_sim_norm, p0=[np.mean(sim), np.std(sim)])
+            err = np.sqrt(np.diag(pcov))
+
+            counts_cum = np.cumsum(counts_norm) * bin_size
+            counts_sim_cum = np.cumsum(counts_sim_norm) * bin_size
+
+            if plot:
+                self.plot_compare_sttc_to_random(bin_centers, popt, err,
+                                                counts_norm, counts_cum,
+                                                counts_sim_norm, counts_sim_cum,
+                                                plot_sim_hist)
+
+
+            if method == 'pdf_difference':
+                slice = (counts_sim_norm > counts_norm)
+                self.correlation.append(np.sum(np.abs(counts_sim_norm[slice] - counts_norm[slice])))
+            elif method == 'Cramer-von Mises_data':
+                self.correlation.append(np.sqrt(np.sum((np.abs(counts_cum - counts_sim_cum))**2)))
+            elif method == 'Wasserstein_data':
+                self.correlation.append(np.sum(np.abs(counts_cum - counts_sim_cum)))
+            elif method == 'Cramer-von Mises_fit':
+                self.correlation.append(np.sqrt(np.sum((np.abs(counts_cum - stt._cum_gauss(bin_centers, popt[0], popt[1])))**2)))
+            elif method == 'Wasserstein_fit':
+                self.correlation.append(np.sum(np.abs(counts_cum - stt._cum_gauss(bin_centers, popt[0], popt[1]))))
+            elif method == 'all':
+                slice = (counts_sim_norm > counts_norm)
+                corr1 = np.sum(np.abs(counts_sim_norm[slice] - counts_norm[slice]))
+                corr2 = np.sqrt(np.sum((np.abs(counts_cum - counts_sim_cum))**2))
+                corr3 = np.sum(np.abs(counts_cum - counts_sim_cum))
+                corr4 = np.sqrt(np.sum((np.abs(counts_cum - stt._cum_gauss(bin_centers, popt[0], popt[1])))**2))
+                corr5 = np.sum(np.abs(counts_cum - stt._cum_gauss(bin_centers, popt[0], popt[1])))
+                self.correlation.append([corr1, corr2, corr3, corr4, corr5])
         
-        sim = self.sttc_sim[np.triu_indices(np.shape(self.sttc_sim)[0], k=1)]
-
-        total_counts = len(result)
-
-        if total_counts != len(sim):
-            print('Length of data and sim don\'t match up.')
-
-
-        bin_min = min([np.min(result), np.min(sim)])
-        bin_max = max([np.max(result), np.max(sim)])
-
-        bin_size = (bin_max - bin_min) / N_bins
-        bin_edges = np.arange(bin_min, bin_max + bin_size, bin_size)
-        bin_centers = bin_edges[1:] - bin_size / 2
-
-        counts, _ = np.histogram(result, bins=bin_edges)
-        counts_sim, _ = np.histogram(sim, bins=bin_edges)
-
-        counts_norm = counts / total_counts / bin_size
-        counts_sim_norm = counts_sim / total_counts / bin_size
-
-        # fit gauss to simulation
-        popt, pcov = curve_fit(stt._gauss_norm, bin_centers, counts_sim_norm, p0=[np.mean(sim), np.std(sim)])
-        err = np.sqrt(np.diag(pcov))
-
-        counts_cum = np.cumsum(counts_norm) * bin_size
-        counts_sim_cum = np.cumsum(counts_sim_norm) * bin_size
-
-        if plot:
-            self.plot_compare_sttc_to_random(bin_centers, popt, err,
-                                             counts_norm, counts_cum,
-                                             counts_sim_norm, counts_sim_cum,
-                                             plot_sim_hist)
-
-
-        if method == 'pdf_difference':
-            slice = (counts_sim_norm > counts_norm)
-            corr = np.sum(np.abs(counts_sim_norm[slice] - counts_norm[slice]))
-        elif method == 'Cramer-von Mises_data':
-            corr = np.sqrt(np.sum((np.abs(counts_cum - counts_sim_cum))**2))
-        elif method == 'Wasserstein_data':
-            corr = np.sum(np.abs(counts_cum - counts_sim_cum))
-        elif method == 'Cramer-von Mises_fit':
-            corr = np.sqrt(np.sum((np.abs(counts_cum - stt._cum_gauss(bin_centers, popt[0], popt[1])))**2))
-        elif method == 'Wasserstein_fit':
-            corr = np.sum(np.abs(counts_cum - stt._cum_gauss(bin_centers, popt[0], popt[1])))
-        elif method == 'all':
-            slice = (counts_sim_norm > counts_norm)
-            corr1 = np.sum(np.abs(counts_sim_norm[slice] - counts_norm[slice]))
-            corr2 = np.sqrt(np.sum((np.abs(counts_cum - counts_sim_cum))**2))
-            corr3 = np.sum(np.abs(counts_cum - counts_sim_cum))
-            corr4 = np.sqrt(np.sum((np.abs(counts_cum - stt._cum_gauss(bin_centers, popt[0], popt[1])))**2))
-            corr5 = np.sum(np.abs(counts_cum - stt._cum_gauss(bin_centers, popt[0], popt[1])))
-            return [corr1, corr2, corr3, corr4, corr5]
-        
-        return corr
+        return self.correlation
 
 
     def plot_compare_sttc_to_random(self, bin_centers : NDArray,
@@ -827,7 +854,7 @@ class MEAData():
 
 
     def convert_results_to_dict(self,
-                                mode : Literal['condensed', 'complete']) -> dict:
+                                mode : Literal['condensed', 'complete', 'minimal']) -> dict:
         if mode == 'condensed':
             results_dict = {
                 'mode'            :   mode,
@@ -851,7 +878,7 @@ class MEAData():
                 'cluster_centers' :   self.cluster_centers
                 }
             
-        if mode == 'complete':
+        elif mode == 'complete':
             results_dict = {
                 'mode'            :   mode,
                 'pressure'        :   self.pressure,
@@ -884,13 +911,29 @@ class MEAData():
                 'cluster_labels'  :   self.cluster_labels,
                 'cluster_centers' :   self.cluster_centers
                 }
+            
+        elif mode == 'minimal':
+            results_dict = {
+                'mode'            :   mode,
+                'pressure'        :   self.pressure,
+                'file_ID'         :   self.file_ID,
+                'N_units'         :   self.N_units,
+                'N_samples'       :   self.N_samples,
+                'T_total'         :   self.T_total,
+                'sample_rate'     :   self.sample_rate,
+                'rate_total'      :   self.rate_total,
+                'time_rate_total' :   self.time_rate_total,
+                'correlation'     :   self.correlation,
+                'SC_max'          :   self.SC_max,
+                'SC_dt_max'       :   self.SC_dt_max
+                }
         
         return results_dict
             
             
     def save_data(self, path : str = None,
                   run_all : bool = False,
-                  mode : Literal['condensed', 'complete'] = 'complete') -> None:
+                  mode : Literal['condensed', 'complete', 'minimal'] = 'complete') -> None:
         
         if path is None:
             path = f'results_{self.file_ID}.pkl'

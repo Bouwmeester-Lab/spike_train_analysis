@@ -196,7 +196,7 @@ def smooth_spiketrain(trains_binary : NDArray,
 
     gaussian = _gaussian_kernel(kernel_size, sigma*sample_rate)
 
-    for i, unit in tqdm(enumerate(trains_binary)):
+    for i, unit in tqdm(enumerate(trains_binary), total=np.shape(trains_binary)[0]):
 
         if method == 'Direct':
             conv_result = _convolution(unit, gaussian, stride=stride)
@@ -288,12 +288,12 @@ def _make_tiling(binary_firings : NDArray,
     if method == 'fft':
         assert dt_min == 0, 'fft method not available for dt_min > 0'
         window = np.ones(w_max)
-        for i, train in tqdm(enumerate(binary_firings)):
+        for i, train in tqdm(enumerate(binary_firings), total=np.shape(binary_firings)[0]):
             result = np.clip(np.convolve(train, window, mode='same'), 0, 1)
             tiling[i] = result
 
     elif method == 'direct': # much faster than fft method
-        for i, train in tqdm(enumerate(binary_firings)):
+        for i, train in tqdm(enumerate(binary_firings), total=np.shape(binary_firings)[0]):
             spikes = np.argwhere(train == 1)[:,0]
             for spike in spikes:
                 if spike <= w_max//2:
@@ -328,7 +328,7 @@ def _loop_pairs(size : int,
     - sttc              (NDArray)  : 2D symmetric matrix of STTC values, where `sttc[i, j]` represents the STTC between units `i` and `j`.
     '''
     sttc = np.ones((size, size))
-    for i in tqdm(range(size)):
+    for i in tqdm(range(size), total=size):
         for j in range(i+1, size):
             if i==0:
                 sums[j] = np.sum(binary_firings[j])
@@ -385,7 +385,7 @@ def STTC(binary_firings : NDArray,
 
     T = np.sum(tiling, axis=1)/N_frames
 
-    print('Calculating STTC...')
+    print(f'Compute STTC with dt_max={dt_max}, dt_max={dt_min}...')
     print(f'Total number of iterations: {int((size**2-size)/2)}')
 
     sums = np.zeros(size)
@@ -536,7 +536,7 @@ def spike_contrast(binary_firings : NDArray,
     contrast = []
     activeST = []
 
-    for dt in tqdm(dts):
+    for dt in tqdm(dts, total=len(dts)):
         half_bin_size = int(dt * sample_rate / stride_bin_ratio)
         bin_edges = np.arange(0, N_samples, half_bin_size)
         bin_edges = np.append(bin_edges, [N_samples]) #add the last bin edge of the last truncated bin
