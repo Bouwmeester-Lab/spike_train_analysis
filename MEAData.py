@@ -6,7 +6,7 @@ import matplotlib.pyplot as plt
 import spike_train_tools as stt
 import pickle
 
-from typing import Tuple, Literal, List
+from typing import Tuple, Literal, List, Union
 from numpy.typing import NDArray
 from sklearn.cluster import KMeans
 from scipy.optimize import curve_fit
@@ -224,7 +224,12 @@ class MEAData():
             except ValueError:
                 content_shape = 'inhomogeneous'
 
-            content_type = type(content).__name__
+            content_type = str(type(content).__name__)
+            if content_type == 'list' or content_type == 'ndarray':
+                try:
+                    content_type += f'[{str(type(content[0]).__name__)}]'
+                except:
+                    pass
             print(key.ljust(spacing),
                   content_shape.ljust(spacing),
                   content_type.ljust(spacing),
@@ -232,7 +237,7 @@ class MEAData():
 
         if self.file_type == 'raw':
             print()
-            print('Units consists of an array of dictionary with more data', end='\n\n')
+            print('Each entry of the array of units is a dictionary:', end='\n\n')
 
             units = self.data['units'] 
             units_keys = units[0].keys()
@@ -244,7 +249,12 @@ class MEAData():
                 except ValueError:
                     content_shape = 'inhomogeneous'
 
-                content_type = type(content).__name__    
+                content_type = type(content).__name__
+                if content_type == 'list' or content_type == 'ndarray':
+                    try:
+                        content_type += f'[{str(type(content[0]).__name__)}]'
+                    except:
+                        pass
                 print(key.ljust(spacing),
                       content_shape.ljust(spacing),
                       content_type.ljust(spacing),
@@ -475,12 +485,12 @@ class MEAData():
         return components
     
 
-    def compute_sttc(self, dt_max : float = 0.05,
-                     dt_min : float = 0,
-                     overwrite : bool = False,
+    def compute_sttc(self, dt_maxs : Union[float, NDArray] = 0.05,
+                     dt_mins : Union[float, NDArray] = 0.,
                      plot : bool = False,
                      sort : bool = True,
-                     tiling_method : Literal['fft', 'direct'] = 'direct') -> NDArray:
+                     tiling_method : Literal['fft', 'direct'] = 'direct',
+                     use_numba : bool = False) -> NDArray:
         '''
         Computes and returns the Spike Time Tiling Coefficient (STTC) for neuron pairs.
         
@@ -495,30 +505,29 @@ class MEAData():
         
         if self.trains_binary is None:
             self.trains_binary = self.convert_trains_to_binary()
-        if self.sttc is not None and overwrite:
-            print('Warning: overwriting STTC results stored in MEAData object!')
 
-
-        sttc = stt.STTC(self.trains_binary, self.sample_rate,
-                             dt_max=dt_max, dt_min=dt_min, plot=plot,
-                             sort=sort, tiling_method=tiling_method)
-        
-
-        sttc_dt = (dt_min, dt_max)
-        
-        if not overwrite:
-            if not type(self.sttc) == list:
-                self.sttc = [self.sttc]
-                self.sttc_dt = [self.sttc_dt]
-
-            self.sttc.append(sttc)
-            self.sttc_dt.append(sttc_dt)
+        if type(dt_maxs) == float and type(dt_mins) == float:
+            self.sttc = stt.STTC(self.trains_binary, self.sample_rate,
+                             dt_max=dt_maxs, dt_min=dt_mins, plot=plot,
+                             sort=sort, tiling_method=tiling_method,
+                             use_numba=use_numba)
+            self.sttc_dt = (dt_min, dt_max)
 
         else:
-            self.sttc = sttc
-            self.sttc_dt = sttc_dt
+            if len(dt_maxs) == len(dt_mins):
+                self.sttc = []
+                self.sttc_dt = []
+                for dt_min, dt_max in zip(dt_mins, dt_maxs):
+                    self.sttc.append(stt.STTC(self.trains_binary, self.sample_rate,
+                                dt_max=dt_max, dt_min=dt_min, plot=plot,
+                                sort=sort, tiling_method=tiling_method,
+                                use_numba=use_numba))
+                    self.sttc_dt.append((dt_min, dt_max))
+            else:
+                print('dt_mins and dt_maxs do not have the same size')
+                return
             
-        return sttc
+        return self.sttc, self.sttc_dt
 
 
     def get_clusters(self, n_clusters : int,
@@ -672,9 +681,7 @@ class MEAData():
         return self.sim, self.sttc_sim
 
 
-    def compare_STTC_to_random(self, dt_max : float = 0.05,
-                               dt_min : float = 0,
-                               N_bins : int = 120,
+    def compare_STTC_to_random(self, N_bins : int = 120,
                                plot : bool = True,
                                method : Literal['pdf_difference',
                                                 'Cramer-von Mises_data',
@@ -682,37 +689,39 @@ class MEAData():
                                                 'Cramer-von Mises_fit',
                                                 'Wasserstein_fit',
                                                 'all'] = 'Wasserstein_fit',
-                               overwrite : bool = False,
                                plot_sim_hist = True) -> float:
     
         if self.sttc is None:
-            print('Compute STTC on data with dt = 0.05...')
-            sttcs = self.compute_sttc(dt_max, dt_min)
-        elif type(self.sttc) == list:
-            if overwrite:
-                sttcs = self.sttc[-1]
-            else:
-                sttcs = self.sttc
-        else:
+            print('Compute STTC on data with dt_max = 0.05...')
+            sttcs = self.compute_sttc()
+        elif type(self.sttc) != list:
             sttcs = [self.sttc]
+            dts = [self.sttc_dt]
+        else:
+            sttcs = self.sttc
+            dts = self.sttc_dt
+            
 
         self.correlation = []
+        dt_mins = [dt[0] for dt in dts]
+        dt_maxs = [dt[1] for dt in dts]
+
             
-        for sttc in sttcs:
-            result = sttc[np.triu_indices(np.shape(sttcs)[0], k=1)]
+        for (dt_min, dt_max, sttc) in zip(dt_mins, dt_maxs, sttcs):
+            result = sttc[np.triu_indices(np.shape(sttc)[0], k=1)]
 
             print('Performing simulation...')
-            self.get_sim(dt_max, dt_min)
+            _, sttc_sim = self.get_sim(dt_max, dt_min)
             
-            sim = self.sttc_sim[np.triu_indices(np.shape(self.sttc_sim)[0], k=1)]
+            sim = sttc_sim[np.triu_indices(np.shape(self.sttc_sim)[0], k=1)]
 
             total_counts = len(result)
 
             if total_counts != len(sim):
                 print('Length of data and sim don\'t match up.')
 
-            bin_min = min([np.min(result), np.min(sim)])
-            bin_max = max([np.max(result), np.max(sim)])
+            bin_min = np.nanmin([result, sim])
+            bin_max = np.nanmax([result, sim])
 
             bin_size = (bin_max - bin_min) / N_bins
             bin_edges = np.arange(bin_min, bin_max + bin_size, bin_size)
@@ -725,7 +734,7 @@ class MEAData():
             counts_sim_norm = counts_sim / total_counts / bin_size
 
             # fit gauss to simulation
-            popt, pcov = curve_fit(stt._gauss_norm, bin_centers, counts_sim_norm, p0=[np.mean(sim), np.std(sim)])
+            popt, pcov = curve_fit(stt._gauss_norm, bin_centers, counts_sim_norm, p0=[np.mean(counts_sim_norm), np.std(counts_sim_norm)])
             err = np.sqrt(np.diag(pcov))
 
             counts_cum = np.cumsum(counts_norm) * bin_size

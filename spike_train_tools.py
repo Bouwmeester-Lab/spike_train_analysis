@@ -11,6 +11,7 @@ from typing import Literal, Tuple, Union
 from numpy.typing import NDArray
 from tqdm import tqdm
 from scipy.special import erf
+from numba import njit
 
 plt.rcdefaults()
 plt.rc('font', family='serif')
@@ -341,13 +342,48 @@ def _loop_pairs(size : int,
     return sttc
 
 
+@njit
+def _loop_pairs_numba(size : int,
+                sums : NDArray,
+                binary_firings : NDArray,
+                tiling : NDArray,
+                T : NDArray) -> NDArray:
+    '''
+    Performs the looping over all pairs of neurons for computing the Spike Time Tiling Coefficient (STTC).
+    This function is separated to include the option of compiling this loop with numba
+
+    Params:
+    - size              (int)       : size of number of neurons
+    - sums              (NDArray)   : tsums of total number of spikes in spike train. 
+    - binary_firings    (NDArray)   : spike trains in binary format
+    - tiling            (NDArray)   : tiling
+    - T                 (NDArray)   : total sum of windows (T_i)
+
+    Returns:
+    - sttc              (NDArray)  : 2D symmetric matrix of STTC values, where `sttc[i, j]` represents the STTC between units `i` and `j`.
+    '''
+    sttc = np.ones((size, size))
+    for i in range(size):
+        for j in range(i+1, size):
+            if i==0:
+                sums[j] = np.sum(binary_firings[j])
+            P_i = np.sum(binary_firings[i] * tiling[j])/sums[i]
+            P_j = np.sum(binary_firings[j] * tiling[i])/sums[j]
+
+            sttc[i, j] = 1/2 * ( (P_i - T[j]) / (1 - P_i*T[j]) + (P_j - T[i]) / (1 - P_j*T[i]) )
+            sttc[j, i] = sttc[i, j]
+
+    return sttc
+
+
 def STTC(binary_firings : NDArray,
          sample_rate : float,
          dt_max : float = 0.05,
          dt_min : float = 0,
          plot : bool = False,
          sort : bool = True,
-         tiling_method : Literal['fft', 'direct'] = 'direct') -> NDArray:
+         tiling_method : Literal['fft', 'direct'] = 'direct',
+         use_numba : bool = False) -> NDArray:
     '''
     Computes the Spike Time Tiling Coefficient (STTC) for pairs of neurons in binary spike train data.
     
@@ -391,7 +427,10 @@ def STTC(binary_firings : NDArray,
     sums = np.zeros(size)
     sums[0] = np.sum(binary_firings[0])
 
-    sttc = _loop_pairs(size, sums, binary_firings, tiling, T)
+    if use_numba:
+        sttc = _loop_pairs_numba(size, sums, binary_firings, tiling, T)
+    else:
+        sttc = _loop_pairs(size, sums, binary_firings, tiling, T)
     
     if plot:
         print('Plotting...')
@@ -461,7 +500,7 @@ def simulate_spiketrains(N_neurons : int,
     >>> trains_binary_sim = simulate_spiketrains(100, 10, 60, 20000)
     '''
     
-    trains_binary_sim = np.full( (N_neurons, int(T_total*sample_rate)), False, dtype=np.bool_)
+    trains_binary_sim = np.full( (N_neurons, int(T_total*sample_rate+1)), False, dtype=np.bool_)
 
     for i, neuron in enumerate(range(N_neurons)):
         if type(rate) != float and type(rate) != int:
