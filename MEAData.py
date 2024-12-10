@@ -6,7 +6,7 @@ import matplotlib.pyplot as plt
 import spike_train_tools as stt
 import pickle
 
-from typing import Tuple, Literal, List, Union
+from typing import Tuple, Literal, List, Union, Any
 from numpy.typing import NDArray
 from sklearn.cluster import KMeans
 from scipy.optimize import curve_fit
@@ -33,21 +33,25 @@ class MEAData():
     
         self.file_type = file_type
 
+
         if self.file_type == 'raw':
             assert path.split('.')[-1] == 'npz', 'raw input file should be an npz file'
 
             self.file_ID = path.split('\\')[-2]
+            self.pressure = pressure
+
             self.data = np.load(path, allow_pickle=True)
+
             self.units = self.data['units']
             self.locations = self.data['locations']
             self.sample_rate = int(self.data['fs'])
-            self.pressure = pressure
+            self.remove_empty_trains()
 
             self.trains = self.get_trains()
+
             self.locs = self.get_locs()
 
             self.N_units = len(self.units)
-
             self.N_samples = self.get_N_samples()
             self.T_total = self.N_samples / self.sample_rate
 
@@ -61,21 +65,35 @@ class MEAData():
 
             self.units = None
             self.locations = None
+            self.trains_sorted = None
 
             with open(path, 'rb') as file:
                 self.data = pickle.load(file)
 
             self.parse_processed_data()
 
-            self.trains_sorted = None
-            
+             
         else:
             print('file type must be either \'raw\' or \'processed\'')
 
+
         self.unit_numbers = np.arange(0, self.N_units)
+
 
         if overview:
             self.print_data_overview()
+
+
+    
+    def remove_empty_trains(self) -> None:
+        del_indices = []
+        for i, unit in enumerate(self.units):
+            if len(unit['spike_train']) == 0:
+                del_indices.append(i)
+
+        self.units = np.delete(self.units, del_indices)
+        self.locations = np.delete(self.locations, del_indices)
+
 
 
     def initialize_attributes(self) -> None:
@@ -91,6 +109,7 @@ class MEAData():
         self.sim = None
         self.sttc_sim = None
         self.correlation = None
+        self.correlation_error = None
         self.SC = None
         self.contrast = None
         self.activeST = None
@@ -100,6 +119,8 @@ class MEAData():
         self.sttc_clustered = None
         self.cluster_labels = None
         self.cluster_centers = None
+
+
 
 
     def parse_processed_data(self) -> None:
@@ -120,6 +141,7 @@ class MEAData():
         self.sim = self.data['sim']
         self.sttc_sim = self.data['sttc_sim']
         self.correlation = self.data['correlation']
+        self.correlation_error = self.data['correlation_error']
         self.SC_max = self.data['SC_max']
         self.SC_dt_max = self.data['SC_dt_max']
         self.sttc_clustered = self.data['sttc_clustered']
@@ -153,6 +175,8 @@ class MEAData():
             self.SC_dts = self.data['SC_dts']       
 
 
+
+
     def get_trains(self):
         if self.file_type == 'raw':
 
@@ -165,6 +189,8 @@ class MEAData():
         
         else:
             return self.trains
+
+
 
 
     def get_locs(self) -> Tuple[NDArray]:
@@ -180,7 +206,9 @@ class MEAData():
         
         else:
             return self.locs
-        
+
+
+
 
     def get_N_samples(self) -> int:
         '''
@@ -202,65 +230,77 @@ class MEAData():
         return int(total_size)
 
 
-    def print_data_overview(self,
-                            spacing : int = 18,
+
+
+    def print_data_overview(self, spacing : int = 18,
                             value_length : int = 140) -> None:
         '''
         Prints an overview of the MEA data. 
         '''
-
-        keys = list(self.data.keys())
 
         # PRINT HEADER
         print('KEY'.ljust(spacing),
               'SHAPE'.ljust(spacing),
               'TYPE'.ljust(spacing),
               'VALUE')
+        
+        keys = list(self.data.keys())
 
         for key in keys:
-            content = self.data[key]
-            try:
-                content_shape = str(np.shape(content))
-            except ValueError:
-                content_shape = 'inhomogeneous'
+            self._print_line(self.data, key, spacing, value_length)
 
-            content_type = str(type(content).__name__)
-            if content_type == 'list' or content_type == 'ndarray':
-                try:
-                    content_type += f'[{str(type(content[0]).__name__)}]'
-                except:
-                    pass
-            print(key.ljust(spacing),
-                  content_shape.ljust(spacing),
-                  content_type.ljust(spacing),
-                  repr(content).replace('\n', '').ljust(value_length)[:value_length])
 
         if self.file_type == 'raw':
             print()
             print('Each entry of the array of units is a dictionary:', end='\n\n')
 
-            units = self.data['units'] 
-            units_keys = units[0].keys()
+            unit0 = self.data['units'][0]
+            units_keys = unit0.keys()
 
             for key in units_keys:
-                content = units[0][key]
-                try:
-                    content_shape = str(np.shape(content))
-                except ValueError:
-                    content_shape = 'inhomogeneous'
+                self._print_line(unit0, key, spacing, value_length)
 
-                content_type = type(content).__name__
-                if content_type == 'list' or content_type == 'ndarray':
-                    try:
-                        content_type += f'[{str(type(content[0]).__name__)}]'
-                    except:
-                        pass
-                print(key.ljust(spacing),
-                      content_shape.ljust(spacing),
-                      content_type.ljust(spacing),
-                      repr(content).replace('\n', '').ljust(value_length)[:value_length])
         print()       
         print(f'Total measurement time: {int(self.T_total//60)} min {round(self.T_total%60, 3)} s', end='\n\n')
+
+
+
+    def _print_line(self, data : Any,
+                    key : str,
+                    spacing : int,
+                    value_length : int) -> None:
+        
+        content = data[key]
+        content_shape = self._get_content_shape(content)
+        content_type = self._get_content_type(content)
+
+        print(key.ljust(spacing),
+              content_shape.ljust(spacing),
+              content_type.ljust(spacing),
+              repr(content).replace('\n', '').ljust(value_length)[:value_length])
+
+
+    
+    def _get_content_type(self, content : Any) -> str:
+        content_type = type(content).__name__
+        if content_type == 'list' or content_type == 'ndarray':
+            try:
+                content_type += f'[{str(type(content[0]).__name__)}]'
+            except:
+                pass
+        return content_type
+
+
+
+
+    def _get_content_shape(self, content : Any) -> str:
+        try:
+            content_shape = str(np.shape(content))
+        except ValueError:
+            content_shape = 'inhomogeneous'
+        return content_shape
+
+
 
 
     def convert_trains_to_binary(self) -> NDArray:
@@ -279,7 +319,9 @@ class MEAData():
             binary_firings[i][train] = True
 
         return binary_firings
-    
+
+
+
 
     def get_firings_total(self) -> NDArray:
         '''
@@ -296,6 +338,8 @@ class MEAData():
         self.firings_total = np.sum(self.trains_binary, axis=0)
 
         return self.firings_total
+
+
 
 
     def get_rate_total(self, window_size : float = 0.03,
@@ -336,7 +380,9 @@ class MEAData():
         self.time_rate_total = np.array(time_avg)
 
         return self.rate_total, self.time_rate_total
-    
+
+
+
 
     def sort_trains(self) -> List:
         '''
@@ -359,8 +405,9 @@ class MEAData():
         return self.trains_sorted
     
 
-    def raster_plot(self,
-                    sort : bool = True,
+
+
+    def raster_plot(self, sort : bool = True,
                     plot_avg : bool = True,
                     time_range : Tuple[float] = None) -> None:
         '''
@@ -383,36 +430,10 @@ class MEAData():
         if plot_avg and self.rate_total is None:
             self.get_rate_total()
 
-        if time_range is None:
-            time_range = (np.min(self.time_rate_total), np.max(self.time_rate_total))
+        stt.raster_plot(plot_trains, self.sample_rate, plot_avg, 
+                        self.time_rate_total, self.rate_total, time_range)
 
-        _, ax1 = plt.subplots(figsize=(20, 8))
 
-        plt.title('Neuron Activity over time')
-
-        for i, train in enumerate(plot_trains):
-            if i == 0:
-                label = 'Firings'
-            else:
-                label = None
-
-            ax1.scatter(train/self.sample_rate, 
-                        np.full_like(train, self.unit_numbers[i]), 
-                        s=.07, color='k', label=label)
-
-        ax1.set_ylabel('Unit number [-]')
-        ax1.set_ylim(0, len(plot_trains))
-
-        if plot_avg:
-            ax2 = ax1.twinx() 
-            ax2.plot(self.time_rate_total, self.rate_total, c='r', alpha=.7, label='Firing rate')
-            ax2.set_ylim(0, 1.05*np.max(self.rate_total))
-            ax2.set_ylabel('Firing rate [Hz]', rotation=270)
-        plt.legend()
-
-        plt.xlabel('Time [min]')
-        plt.xlim(time_range[0], time_range[1])
-        plt.show()
 
 
     def get_rates(self, method : Literal['Direct', 'ISI'],
@@ -452,6 +473,8 @@ class MEAData():
         return self.rates, self.time_rates
 
 
+
+
     def get_rates_avg(self) -> NDArray:
         if self.trains_binary is None:
             self.trains_binary = self.convert_trains_to_binary()
@@ -459,6 +482,8 @@ class MEAData():
         self.rates_avg = np.sum(self.trains_binary, axis=1)/self.T_total
 
         return self.rates_avg
+
+
 
 
     def dim_red(self, dimension : int,
@@ -483,10 +508,12 @@ class MEAData():
         components = stt.dim_red(self.rates, dimension, method, plot, ranges)
 
         return components
-    
 
-    def compute_sttc(self, dt_maxs : Union[float, NDArray] = 0.05,
-                     dt_mins : Union[float, NDArray] = 0.,
+
+
+
+    def compute_sttc(self, dt_max : Union[float, NDArray] = 0.05,
+                     dt_min : Union[float, NDArray] = 0.,
                      plot : bool = False,
                      sort : bool = True,
                      tiling_method : Literal['fft', 'direct'] = 'direct',
@@ -506,28 +533,30 @@ class MEAData():
         if self.trains_binary is None:
             self.trains_binary = self.convert_trains_to_binary()
 
-        if type(dt_maxs) == float and type(dt_mins) == float:
+        if type(dt_max) == float and type(dt_min) == float:
             self.sttc = stt.STTC(self.trains_binary, self.sample_rate,
-                             dt_max=dt_maxs, dt_min=dt_mins, plot=plot,
+                             dt_max=dt_max, dt_min=dt_min, plot=plot,
                              sort=sort, tiling_method=tiling_method,
                              use_numba=use_numba)
             self.sttc_dt = (dt_min, dt_max)
 
         else:
-            if len(dt_maxs) == len(dt_mins):
+            if len(dt_max) == len(dt_min):
                 self.sttc = []
                 self.sttc_dt = []
-                for dt_min, dt_max in zip(dt_mins, dt_maxs):
+                for dtmin, dtmax in zip(dt_min, dt_max):
                     self.sttc.append(stt.STTC(self.trains_binary, self.sample_rate,
-                                dt_max=dt_max, dt_min=dt_min, plot=plot,
-                                sort=sort, tiling_method=tiling_method,
-                                use_numba=use_numba))
-                    self.sttc_dt.append((dt_min, dt_max))
+                                              dt_max=dtmax, dt_min=dtmin, plot=plot,
+                                              sort=sort, tiling_method=tiling_method,
+                                              use_numba=use_numba))
+                    self.sttc_dt.append((dtmin, dtmax))
             else:
                 print('dt_mins and dt_maxs do not have the same size')
                 return
             
         return self.sttc, self.sttc_dt
+
+
 
 
     def get_clusters(self, n_clusters : int,
@@ -543,6 +572,8 @@ class MEAData():
             self.plot_clusters(self.cluster_labels, self.cluster_centers)
 
         return self.cluster_labels, self.cluster_centers
+
+
 
 
     def plot_clusters(self, labels : NDArray = None,
@@ -592,6 +623,8 @@ class MEAData():
         plt.show()
 
 
+
+
     def get_STTC_clustered(self, plot : bool = True) -> NDArray:
         if self.cluster_labels is None:
             self.get_clusters()
@@ -600,7 +633,7 @@ class MEAData():
             self.compute_sttc()
 
         order = np.argsort(self.cluster_labels)
-        sttc_result_ordered = self.sttc[order][:,order]
+        sttc_result_ordered = self.sttc[-1][order][:,order]
         labels_ordered = self.cluster_labels[order]
         np.fill_diagonal(sttc_result_ordered, np.nan)
 
@@ -619,11 +652,11 @@ class MEAData():
 
         return self.sttc_clustered
 
+
+
         
     def plot_STTC_clustered(self):
-        if self.sttc_clustered is None:
-            self.get_STTC_clustered()
-        elif int(np.shape(self.sttc_clustered)[0]) != int(len(self.cluster_centers)):
+        if ( self.sttc_clustered is None ) or ( int(np.shape(self.sttc_clustered)[0]) != int(len(self.cluster_centers)) ):
             self.get_STTC_clustered()
 
         order = np.argsort(self.cluster_labels)
@@ -668,28 +701,83 @@ class MEAData():
         plt.show()
 
 
-    def get_sim(self, dt_max : float = 0.05,
-                dt_min : float = 0):
+
+
+    def compute_sttc_sim(self, dt_max : float = 0.05,
+                         dt_min : float = 0,
+                         use_numba : bool = False):
         
         if self.rates_avg is None:
             self.get_rates_avg()
 
         self.sim = stt.simulate_spiketrains(self.N_units, self.rates_avg, self.T_total, self.sample_rate)
         
-        self.sttc_sim = stt.STTC(self.sim, sample_rate=self.sample_rate, dt_max=dt_max, dt_min=dt_min, plot=False)
+        self.sttc_sim = stt.STTC(self.sim, sample_rate=self.sample_rate, dt_max=dt_max, dt_min=dt_min, plot=False, use_numba=use_numba)
 
         return self.sim, self.sttc_sim
+    
 
 
-    def compare_STTC_to_random(self, N_bins : int = 120,
+    def get_pdf(self, data : NDArray,
+                bins : Union[int, str]) -> Tuple[NDArray, NDArray, float]:
+        
+        counts, bin_edges = np.histogram(data, bins=bins)
+
+        bin_size = bin_edges[1] - bin_edges[0]
+        bin_centers = bin_edges[1:] - bin_size / 2
+
+        total_counts = np.sum(counts)
+
+        counts_norm = counts / total_counts / bin_size
+
+        return counts_norm, bin_centers, bin_size
+    
+
+    
+    def get_correlation(self, method : Literal['pdf_difference',
+                                               'Cramer-von Mises',
+                                               'Wasserstein',
+                                               'all'],
+                        pdf : NDArray = None, 
+                        pdf_sim : NDArray = None, 
+                        cdf : NDArray = None, 
+                        cdf_sim : NDArray = None) -> NDArray:
+        
+        correlation = []
+
+        if method == 'pdf_difference' or method == 'all':
+            assert pdf is not None and pdf_sim is not None, 'pdf_difference method needs pdf and pdf_sim arguments'
+            slice = (pdf_sim > pdf)
+            correlation.append(np.sum(np.abs(pdf_sim[slice] - pdf[slice])))
+
+        if method == 'Cramer-von Mises' or method == 'all':
+            assert cdf is not None and cdf_sim is not None, 'Cramer-von Mises method needs cdf and cdf_sim arguments'
+            correlation.append(np.sum((np.abs(cdf - cdf_sim)**2)))
+
+        if method == 'Wasserstein' or method == 'all':
+            assert cdf is not None and cdf_sim is not None, 'Wasserstein method needs cdf and cdf_sim arguments'
+            correlation.append(np.sum(np.abs(cdf - cdf_sim)))
+
+        correlation = np.array(correlation)
+        
+        return correlation
+
+
+    def upper_triangle(self, data : NDArray) -> NDArray:
+        return data[np.triu_indices(np.shape(data)[0], k=1)]
+
+
+    
+    def compare_STTC_to_random(self, bins_data : Union[int, str],
+                               bins_sim : Union[int, str],
                                plot : bool = True,
                                method : Literal['pdf_difference',
-                                                'Cramer-von Mises_data',
-                                                'Wasserstein_data',
-                                                'Cramer-von Mises_fit',
-                                                'Wasserstein_fit',
-                                                'all'] = 'Wasserstein_fit',
-                               plot_sim_hist = True) -> float:
+                                                'Cramer-von Mises',
+                                                'Wasserstein',
+                                                'all'] = 'Wasserstein',
+                               n_splits : int = 1,
+                               plot_sim_hist : bool = False,
+                               use_numba : bool = False) -> NDArray:
     
         if self.sttc is None:
             print('Compute STTC on data with dt_max = 0.05...')
@@ -700,126 +788,111 @@ class MEAData():
         else:
             sttcs = self.sttc
             dts = self.sttc_dt
-            
 
-        self.correlation = []
         dt_mins = [dt[0] for dt in dts]
         dt_maxs = [dt[1] for dt in dts]
+ 
+        for i, (dt_min, dt_max, sttc) in enumerate(zip(dt_mins, dt_maxs, sttcs)):
+            data = self.upper_triangle(sttc)
 
-            
-        for (dt_min, dt_max, sttc) in zip(dt_mins, dt_maxs, sttcs):
-            result = sttc[np.triu_indices(np.shape(sttc)[0], k=1)]
-
-            print('Performing simulation...')
-            _, sttc_sim = self.get_sim(dt_max, dt_min)
-            
-            sim = sttc_sim[np.triu_indices(np.shape(self.sttc_sim)[0], k=1)]
-
-            total_counts = len(result)
-
-            if total_counts != len(sim):
-                print('Length of data and sim don\'t match up.')
-
-            bin_min = np.nanmin([result, sim])
-            bin_max = np.nanmax([result, sim])
-
-            bin_size = (bin_max - bin_min) / N_bins
-            bin_edges = np.arange(bin_min, bin_max + bin_size, bin_size)
-            bin_centers = bin_edges[1:] - bin_size / 2
-
-            counts, _ = np.histogram(result, bins=bin_edges)
-            counts_sim, _ = np.histogram(sim, bins=bin_edges)
-
-            counts_norm = counts / total_counts / bin_size
-            counts_sim_norm = counts_sim / total_counts / bin_size
-
-            # fit gauss to simulation
-            popt, pcov = curve_fit(stt._gauss_norm, bin_centers, counts_sim_norm, p0=[np.mean(counts_sim_norm), np.std(counts_sim_norm)])
+            _, sttc_sim = self.compute_sttc_sim(dt_max, dt_min, use_numba=use_numba)
+            sim = self.upper_triangle(sttc_sim)
+            pdf_sim, bin_centers_sim, bin_size_sim = self.get_pdf(sim, bins_sim)
+            cdf_sim = np.cumsum(pdf_sim) * bin_size_sim
+            popt, pcov = curve_fit(stt._gauss_norm, bin_centers_sim, pdf_sim, p0=[np.mean(pdf_sim), np.std(pdf_sim)])
             err = np.sqrt(np.diag(pcov))
 
-            counts_cum = np.cumsum(counts_norm) * bin_size
-            counts_sim_cum = np.cumsum(counts_sim_norm) * bin_size
+            np.random.shuffle(data)
+            splits = np.array_split(data, n_splits)
 
-            if plot:
-                self.plot_compare_sttc_to_random(bin_centers, popt, err,
-                                                counts_norm, counts_cum,
-                                                counts_sim_norm, counts_sim_cum,
-                                                plot_sim_hist)
-
-
-            if method == 'pdf_difference':
-                slice = (counts_sim_norm > counts_norm)
-                self.correlation.append(np.sum(np.abs(counts_sim_norm[slice] - counts_norm[slice])))
-            elif method == 'Cramer-von Mises_data':
-                self.correlation.append(np.sqrt(np.sum((np.abs(counts_cum - counts_sim_cum))**2)))
-            elif method == 'Wasserstein_data':
-                self.correlation.append(np.sum(np.abs(counts_cum - counts_sim_cum)))
-            elif method == 'Cramer-von Mises_fit':
-                self.correlation.append(np.sqrt(np.sum((np.abs(counts_cum - stt._cum_gauss(bin_centers, popt[0], popt[1])))**2)))
-            elif method == 'Wasserstein_fit':
-                self.correlation.append(np.sum(np.abs(counts_cum - stt._cum_gauss(bin_centers, popt[0], popt[1]))))
-            elif method == 'all':
-                slice = (counts_sim_norm > counts_norm)
-                corr1 = np.sum(np.abs(counts_sim_norm[slice] - counts_norm[slice]))
-                corr2 = np.sqrt(np.sum((np.abs(counts_cum - counts_sim_cum))**2))
-                corr3 = np.sum(np.abs(counts_cum - counts_sim_cum))
-                corr4 = np.sqrt(np.sum((np.abs(counts_cum - stt._cum_gauss(bin_centers, popt[0], popt[1])))**2))
-                corr5 = np.sum(np.abs(counts_cum - stt._cum_gauss(bin_centers, popt[0], popt[1])))
-                self.correlation.append([corr1, corr2, corr3, corr4, corr5])
+            for j, split in enumerate(splits):
+                pdf, bin_centers, bin_size = self.get_pdf(split, bins_data)
+                cdf = np.cumsum(pdf) * bin_size
         
-        return self.correlation
+                if plot:
+                    self.plot_sttc_histogram(bin_centers, bin_centers_sim, popt, err,
+                                             pdf, cdf, pdf_sim, cdf_sim, plot_sim_hist)
+                
+                corr_j = self.get_correlation(method, pdf, stt._gauss_norm(bin_centers, *popt),
+                                                    cdf, stt._cum_gauss(bin_centers, *popt))
+                print(corr_j)
+                if j == 0:
+                    corr_i = np.array([corr_j])
+                else:
+                    corr_i = np.vstack((corr_i, corr_j))
 
+            if n_splits > 1:
+                corr_mean = np.mean(corr_i, axis=0)
+                corr_err = np.std(corr_i, axis=0)
+            else:
+                corr_mean = corr_i
+                corr_err = np.full_like(corr_i, None)
 
-    def plot_compare_sttc_to_random(self, bin_centers : NDArray,
-                                    popt : NDArray,
-                                    err : NDArray,
-                                    counts_norm : NDArray,
-                                    counts_cum : NDArray,
-                                    counts_sim_norm : NDArray,
-                                    counts_sim_cum : NDArray,
-                                    plot_sim_hist : bool) -> None:
+            if i == 0:
+                self.correlation = corr_mean
+                self.correlation_error = corr_err
+            else:
+                self.correlation = np.vstack((self.correlation, corr_mean))
+                self.correlation_error = np.vstack((self.correlation_error, corr_err))
+   
+        return self.correlation, self.correlation_error
+
+ 
+    def plot_sttc_histogram(self, bin_centers_data : NDArray,
+                            bin_centers_sim : NDArray,
+                            popt : NDArray,
+                            err : NDArray,
+                            counts_norm : NDArray,
+                            counts_cum : NDArray,
+                            counts_sim_norm : NDArray,
+                            counts_sim_cum : NDArray,
+                            plot_sim_hist : bool) -> None:
         
-        bin_size = np.mean(np.diff(bin_centers))
-        bin_min, bin_max = bin_centers[0]-bin_size/2, bin_centers[-1]+bin_size/2
-        bin_continuous = np.linspace(bin_min, bin_max, 1000)
-        gauss = stt._gauss_norm(bin_centers, *popt)
+        bin_size_data = np.mean(np.diff(bin_centers_data))
+        bin_min_data, bin_max_data = bin_centers_data[0]-bin_size_data/2, bin_centers_data[-1]+bin_size_data/2
+
+        bin_size_sim = np.mean(np.diff(bin_centers_sim))
+        bin_min_sim, bin_max_sim = bin_centers_sim[0]-bin_size_sim/2, bin_centers_sim[-1]+bin_size_sim/2
+
+        bin_continuous = np.linspace(min((bin_min_data, bin_min_sim)), max((bin_max_data, bin_max_sim)), 1000)
+
         gauss_cont = stt._gauss_norm(bin_continuous, *popt)
 
         cum_gauss_cont = stt._cum_gauss(bin_continuous, *popt)
-        cum_gauss = stt._cum_gauss(bin_centers, *popt)
+        cum_gauss = stt._cum_gauss(bin_centers_data, *popt)
 
         _, axs = plt.subplots(1, 2, figsize=(12, 5))
         plt.suptitle(f'Xenon pressure: {self.pressure} psi')
 
         if plot_sim_hist:
-            axs[0].bar(bin_centers, counts_sim_norm, width=bin_size, color='white', edgecolor='k', alpha=.5, label='Poisson')
-            axs[1].bar(bin_centers, counts_sim_cum, width=bin_size, color='white', edgecolor='k', alpha=.5, label='random sim')
+            axs[0].bar(bin_centers_sim, counts_sim_norm, width=bin_size_sim, color='white', edgecolor='k', alpha=.5, label='Poisson')
+            axs[1].bar(bin_centers_sim, counts_sim_cum, width=bin_size_sim, color='white', edgecolor='k', alpha=.5, label='random sim')
 
         axs[0].set_title('pdf')
-        axs[0].bar(bin_centers, counts_norm, width=bin_size, color='r', edgecolor='k', alpha=.5, label='data')
+        axs[0].bar(bin_centers_data, counts_norm, width=bin_size_data, color='r', edgecolor='k', alpha=.5, label='data')
         axs[0].plot(bin_continuous, gauss_cont, c='k', linestyle='--', label='fit')
-        axs[0].fill_between(bin_centers, gauss, counts_norm, where=(counts_norm > gauss), 
+        axs[0].fill_between(bin_centers_data, stt._gauss_norm(bin_centers_data, *popt), counts_norm, where=(counts_norm > stt._gauss_norm(bin_centers_data, *popt)), 
                 color='b', alpha=.3, label='correlation')
         axs[0].set_ylabel('Probability density')
-        axs[0].text(.96*bin_max, .7 / np.sqrt(2*np.pi*popt[1]**2),
+        axs[0].text(.96*bin_max_data, .7 / np.sqrt(2*np.pi*popt[1]**2),
                     f'µ = {popt[0]:.4f} ± {err[0]:.4f}\nσ = {popt[1]:.4f} ± {err[1]:.4f}', 
                     horizontalalignment='right', verticalalignment='center',
                     bbox=dict(boxstyle='round', facecolor='white', alpha=0.5))
         axs[0].legend()
 
         axs[1].set_title('cdf')
-        axs[1].fill_between(bin_centers, counts_cum, cum_gauss, where=(cum_gauss > counts_cum), 
+        axs[1].fill_between(bin_centers_data, counts_cum, cum_gauss, where=(cum_gauss > counts_cum), 
                 color='b', alpha=0.3)
-        axs[1].fill_between(bin_centers, counts_cum, cum_gauss, where=(cum_gauss <= counts_cum), 
+        axs[1].fill_between(bin_centers_data, counts_cum, cum_gauss, where=(cum_gauss <= counts_cum), 
                 color='b', alpha=0.3)
-        axs[1].bar(bin_centers, counts_cum, width=bin_size, color='r', edgecolor='k', alpha=.5, label='data')
+        axs[1].bar(bin_centers_data, counts_cum, width=bin_size_data, color='r', edgecolor='k', alpha=.5, label='data')
         axs[1].plot(bin_continuous, cum_gauss_cont, c='k', linestyle='--', label='fit')
         axs[1].set_ylabel('Cumulative probability density')
         
 
         for ax in axs:
             ax.set_xlabel('STTC [-]')
-            ax.set_xlim(bin_min, bin_max)
+            ax.set_xlim(bin_min_data, bin_max_data)
         plt.show()
 
 
@@ -857,7 +930,7 @@ class MEAData():
         if self.sttc_clustered is None:
             self.get_STTC_clustered()
         if self.sim is None:
-            self.get_sim()
+            self.compute_sttc_sim()
         if self.sttc_sim is None or self.correlation is None:
             self.compare_STTC_to_random(plot=False, method='all')
 
@@ -866,75 +939,77 @@ class MEAData():
                                 mode : Literal['condensed', 'complete', 'minimal']) -> dict:
         if mode == 'condensed':
             results_dict = {
-                'mode'            :   mode,
-                'pressure'        :   self.pressure,
-                'file_ID'         :   self.file_ID,
-                'N_units'         :   self.N_units,
-                'N_samples'       :   self.N_samples,
-                'T_total'         :   self.T_total,
-                'sample_rate'     :   self.sample_rate,
-                'locs'            :   self.locs,
-                'trains'          :   self.trains,
-                'sttc'            :   self.sttc,
-                'sttc_dt'         :   self.sttc_dt,
-                'sim'             :   self.sim,
-                'sttc_sim'        :   self.sttc_sim,
-                'correlation'     :   self.correlation,
-                'SC_max'          :   self.SC_max,
-                'SC_dt_max'       :   self.SC_dt_max,
-                'sttc_clustered'  :   self.sttc_clustered,
-                'cluster_labels'  :   self.cluster_labels,
-                'cluster_centers' :   self.cluster_centers
+                'mode'             :   mode,
+                'pressure'         :   self.pressure,
+                'file_ID'          :   self.file_ID,
+                'N_units'          :   self.N_units,
+                'N_samples'        :   self.N_samples,
+                'T_total'          :   self.T_total,
+                'sample_rate'      :   self.sample_rate,
+                'locs'             :   self.locs,
+                'trains'           :   self.trains,
+                'sttc'             :   self.sttc,
+                'sttc_dt'          :   self.sttc_dt,
+                'sim'              :   self.sim,
+                'sttc_sim'         :   self.sttc_sim,
+                'correlation'      :   self.correlation,
+                'correlation_error':   self.correlation_error,
+                'SC_max'           :   self.SC_max,
+                'SC_dt_max'        :   self.SC_dt_max,
+                'sttc_clustered'   :   self.sttc_clustered,
+                'cluster_labels'   :   self.cluster_labels,
+                'cluster_centers'  :   self.cluster_centers
                 }
             
         elif mode == 'complete':
             results_dict = {
-                'mode'            :   mode,
-                'pressure'        :   self.pressure,
-                'file_ID'         :   self.file_ID,
-                'N_units'         :   self.N_units,
-                'N_samples'       :   self.N_samples,
-                'T_total'         :   self.T_total,
-                'sample_rate'     :   self.sample_rate,
-                'locs'            :   self.locs,
-                'trains'          :   self.trains,
-                'trains_binary'   :   self.trains_binary,
-                'firings_total'   :   self.firings_total,
-                'rate_total'      :   self.rate_total,
-                'time_rate_total' :   self.time_rate_total,
-                'rates'           :   self.rates,
-                'time_rates'      :   self.time_rates,
-                'rates_avg'       :   self.rates_avg,
-                'sttc'            :   self.sttc,
-                'sttc_dt'         :   self.sttc_dt,
-                'sim'             :   self.sim,
-                'sttc_sim'        :   self.sttc_sim,
-                'correlation'     :   self.correlation,
-                'SC'              :   self.SC,
-                'contrast'        :   self.contrast,
-                'activeST'        :   self.activeST,
-                'SC_dts'          :   self.SC_dts,
-                'SC_max'          :   self.SC_max,
-                'SC_dt_max'       :   self.SC_dt_max,
-                'sttc_clustered'  :   self.sttc_clustered,
-                'cluster_labels'  :   self.cluster_labels,
-                'cluster_centers' :   self.cluster_centers
+                'mode'             :   mode,
+                'pressure'         :   self.pressure,
+                'file_ID'          :   self.file_ID,
+                'N_units'          :   self.N_units,
+                'N_samples'        :   self.N_samples,
+                'T_total'          :   self.T_total,
+                'sample_rate'      :   self.sample_rate,
+                'locs'             :   self.locs,
+                'trains'           :   self.trains,
+                'trains_binary'    :   self.trains_binary,
+                'firings_total'    :   self.firings_total,
+                'rate_total'       :   self.rate_total,
+                'time_rate_total'  :   self.time_rate_total,
+                'rates'            :   self.rates,
+                'time_rates'       :   self.time_rates,
+                'rates_avg'        :   self.rates_avg,
+                'sttc'             :   self.sttc,
+                'sttc_dt'          :   self.sttc_dt,
+                'sim'              :   self.sim,
+                'sttc_sim'         :   self.sttc_sim,
+                'correlation'      :   self.correlation,
+                'SC'               :   self.SC,
+                'contrast'         :   self.contrast,
+                'activeST'         :   self.activeST,
+                'SC_dts'           :   self.SC_dts,
+                'SC_max'           :   self.SC_max,
+                'SC_dt_max'        :   self.SC_dt_max,
+                'sttc_clustered'   :   self.sttc_clustered,
+                'cluster_labels'   :   self.cluster_labels,
+                'cluster_centers'  :   self.cluster_centers
                 }
             
         elif mode == 'minimal':
             results_dict = {
-                'mode'            :   mode,
-                'pressure'        :   self.pressure,
-                'file_ID'         :   self.file_ID,
-                'N_units'         :   self.N_units,
-                'N_samples'       :   self.N_samples,
-                'T_total'         :   self.T_total,
-                'sample_rate'     :   self.sample_rate,
-                'rate_total'      :   self.rate_total,
-                'time_rate_total' :   self.time_rate_total,
-                'correlation'     :   self.correlation,
-                'SC_max'          :   self.SC_max,
-                'SC_dt_max'       :   self.SC_dt_max
+                'mode'             :   mode,
+                'pressure'         :   self.pressure,
+                'file_ID'          :   self.file_ID,
+                'N_units'          :   self.N_units,
+                'N_samples'        :   self.N_samples,
+                'T_total'          :   self.T_total,
+                'sample_rate'      :   self.sample_rate,
+                'rate_total'       :   self.rate_total,
+                'time_rate_total'  :   self.time_rate_total,
+                'correlation'      :   self.correlation,
+                'correlation_error':   self.correlation_error,
+                'SC_max'           :   self.SC_max,
+                'SC_dt_max'        :   self.SC_dt_max
                 }
         
         return results_dict

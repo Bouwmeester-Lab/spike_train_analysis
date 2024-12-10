@@ -7,7 +7,7 @@ import umap.umap_ as umap
 
 from sklearn.decomposition import PCA
 from sklearn.manifold import TSNE
-from typing import Literal, Tuple, Union
+from typing import Literal, Tuple, Union, List
 from numpy.typing import NDArray
 from tqdm import tqdm
 from scipy.special import erf
@@ -248,6 +248,7 @@ def smooth_spiketrain(trains_binary : NDArray,
         
     return rates
 
+
   
 def _make_tiling(binary_firings : NDArray,
                  sample_rate : float,
@@ -309,6 +310,7 @@ def _make_tiling(binary_firings : NDArray,
     return tiling
 
 
+
 def _loop_pairs(size : int,
                 sums : NDArray,
                 binary_firings : NDArray,
@@ -329,17 +331,21 @@ def _loop_pairs(size : int,
     - sttc              (NDArray)  : 2D symmetric matrix of STTC values, where `sttc[i, j]` represents the STTC between units `i` and `j`.
     '''
     sttc = np.ones((size, size))
-    for i in tqdm(range(size), total=size):
-        for j in range(i+1, size):
-            if i==0:
-                sums[j] = np.sum(binary_firings[j])
-            P_i = np.sum(binary_firings[i] * tiling[j])/sums[i]
-            P_j = np.sum(binary_firings[j] * tiling[i])/sums[j]
+    with tqdm(total=size) as pbar:
+        for i in range(size):
+            for j in range(i+1, size):
+                if i==0:
+                    sums[j] = np.sum(binary_firings[j])
+                P_i = np.sum(binary_firings[i] * tiling[j])/sums[i]
+                P_j = np.sum(binary_firings[j] * tiling[i])/sums[j]
 
-            sttc[i, j] = 1/2 * ( (P_i - T[j]) / (1 - P_i*T[j]) + (P_j - T[i]) / (1 - P_j*T[i]) )
-            sttc[j, i] = sttc[i, j]
+                sttc[i, j] = 1/2 * ( (P_i - T[j]) / (1 - P_i*T[j]) + (P_j - T[i]) / (1 - P_j*T[i]) )
+                sttc[j, i] = sttc[i, j]
+                
+                pbar.update(1)
 
     return sttc
+
 
 
 @njit
@@ -362,6 +368,7 @@ def _loop_pairs_numba(size : int,
     Returns:
     - sttc              (NDArray)  : 2D symmetric matrix of STTC values, where `sttc[i, j]` represents the STTC between units `i` and `j`.
     '''
+    print('<<<Progress bar not available with numba>>>')
     sttc = np.ones((size, size))
     for i in range(size):
         for j in range(i+1, size):
@@ -374,6 +381,7 @@ def _loop_pairs_numba(size : int,
             sttc[j, i] = sttc[i, j]
 
     return sttc
+
 
 
 def STTC(binary_firings : NDArray,
@@ -439,6 +447,7 @@ def STTC(binary_firings : NDArray,
     return sttc
 
 
+
 def plot_sttc(sttc : NDArray,
               sort : bool) -> None:
     if sort:
@@ -455,9 +464,11 @@ def plot_sttc(sttc : NDArray,
     plt.show()
 
 
+
 def _gauss(x : Union[float, NDArray],
            cen : float, sigma : float, A : float) -> Union[float, NDArray]:
     return A * np.exp(-1*(x-cen)**2/(2*sigma**2))
+
 
 
 def _cum_gauss(x : Union[float, NDArray],
@@ -470,6 +481,7 @@ def _double_gauss(x : Union[float, NDArray],
                   cen1 : float, sigma1 : float, A1 : float,
                   cen2 : float, sigma2 : float, A2 : float) -> Union[float, NDArray]:
     return _gauss(x, cen1, sigma1, A1) + _gauss(x, cen2, sigma2, A2)
+
 
 
 def _gauss_norm(x : Union[float, NDArray],
@@ -629,4 +641,45 @@ def plot_spike_contrast(spike_contrast : NDArray,
     labels = [plot.get_label() for plot in plots]
     axleft.legend(plots, labels)
 
+    plt.show()
+
+
+
+def raster_plot(trains : List, 
+                sample_rate : int,
+                plot_avg : bool,
+                time_rate_total : NDArray,
+                rate_total : NDArray,
+                time_range : Tuple[float] = None) -> None:
+    if time_range is None:
+        time_range = (np.min(time_rate_total), np.max(time_rate_total))
+    
+    unit_numbers = np.arange(0, len(trains))
+
+    _, ax1 = plt.subplots(figsize=(20, 8))
+
+    plt.title('Neuron Activity over time')
+
+    for i, train in enumerate(trains):
+        if i == 0:
+            label = 'Firings'
+        else:
+            label = None
+
+        ax1.scatter(train/sample_rate, 
+                    np.full_like(train, unit_numbers[i]), 
+                    s=.07, color='k', label=label)
+
+    ax1.set_ylabel('Unit number [-]')
+    ax1.set_ylim(0, len(trains))
+
+    if plot_avg:
+        ax2 = ax1.twinx() 
+        ax2.plot(time_rate_total, rate_total, c='r', alpha=.7, label='Firing rate')
+        ax2.set_ylim(0, 1.05*np.max(rate_total))
+        ax2.set_ylabel('Firing rate [Hz]', rotation=270)
+    plt.legend()
+
+    plt.xlabel('Time [min]')
+    plt.xlim(time_range[0], time_range[1])
     plt.show()

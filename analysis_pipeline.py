@@ -27,7 +27,7 @@ def pipe(pressures,
     rate_sigma = 0.05
 
     # sttc params
-    dt_maxs = np.array([.04])
+    dt_maxs = np.array([.2, .04])
     dt_mins = np.array([0])
 
     # spike contrast params
@@ -52,11 +52,11 @@ def pipe(pressures,
         print()
 
         print(f'Calculating STTCs with dt_max = {dt_maxs} and dt_min = {dt_mins}...')
-        mea_data.compute_sttc(dt_maxs=dt_maxs, dt_mins=dt_mins, use_numba=False)
+        mea_data.compute_sttc(dt_max=dt_maxs, dt_min=dt_mins, use_numba=True)
         print()
 
         print(f'Calculating STTC to random comparison with dt_max = {dt_maxs} and dt_min = {dt_mins}......')
-        mea_data.compare_STTC_to_random(plot=False, method='all')
+        mea_data.compare_STTC_to_random(bins_data='auto', bins_sim='auto', plot=False, method='all', use_numba=True, n_splits=5)
         print()
 
         print('Calculating spike contrast...')
@@ -75,23 +75,23 @@ def pipe(pressures,
 
 
 if __name__ == '__main__':
-    base_paths = ['C:\\Users\\bow-lab\\Documents\\Code\\data\\ABAB_3\\25327\\']
+    base_paths = ['C:\\Users\\bow-lab\\Documents\\Code\\data\\ABAB_4\\241126\\25501\\']
     trials = ['A_1', 'A_2', 'B_1', 'B_2']
 
-    pressures = np.array([[0.13, 11.49, 17.33, 22.11, 24.90],
-                          [0.15, 10.16, 15.61, 20.40, 25.20],
-                          [0.12, 11.24, 15.30, 20.27, 24.48],
-                          [0.16, 10.93, 15.27, 20.44, 24.13]])
+    pressures = np.array([[0.04, 10.38, 15.37, 19.89, 23.77],
+                          [0.13, 10.17, 13.54, 18.00, 22.99],
+                          [0.09, 10.21, 15.32, 20.23, 24.50],
+                          [0.03, 10.12, 13.52, 18.50, 21.66]])
     
-    press_err = np.array([[.01, .08, .13, .13, .04],
-                          [.06, .07, .14, .07, .03],
-                          [.03, .05, .05, .03, .07],
-                          [.07, .03, .07, .03, .03]])
+    press_err = np.array([[.03, .12, .15, .19, .22],
+                          [.03, .10, .12, .13, .20],
+                          [.03, .05, .07, .07, .09],
+                          [.03, .08, .04, .08, .10]])
 
     for base_path in base_paths:
         for i, trial in enumerate(trials):
-            input_path = base_path + trial + '\\chunk*'
-            output_path = f'results_{base_path.split('\\')[-2]}_{trial}.pkl'
+            input_path = base_path + trial + '\\kilosort2\\chunk*'
+            output_path = f'results_{base_path.split('\\')[-1]}_{trial}.pkl'
 
             print('+' + '-'*24 + '+')
             print(f'|  MEA CHIP:  {base_path.split('\\')[-2]}'.ljust(23) + '  |')
