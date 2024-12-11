@@ -336,9 +336,14 @@ def _loop_pairs(size : int,
             for j in range(i+1, size):
                 if i==0:
                     sums[j] = np.sum(binary_firings[j])
+                
                 P_i = np.sum(binary_firings[i] * tiling[j])/sums[i]
                 P_j = np.sum(binary_firings[j] * tiling[i])/sums[j]
-
+                
+                #if (1 - P_i*T[j]) == 0 or (1 - P_j*T[i]) == 0:
+                #    sttc[i, j] = 1
+                #else:
+                #    sttc[i, j] = 1/2 * ( (P_i - T[j]) / (1 - P_i*T[j]) + (P_j - T[i]) / (1 - P_j*T[i]) )
                 sttc[i, j] = 1/2 * ( (P_i - T[j]) / (1 - P_i*T[j]) + (P_j - T[i]) / (1 - P_j*T[i]) )
                 sttc[j, i] = sttc[i, j]
                 
@@ -420,8 +425,6 @@ def STTC(binary_firings : NDArray,
     '''
     
     size = np.shape(binary_firings)[0]
-    sttc = np.ones((size, size))
-
     N_frames = np.shape(binary_firings)[1]
     
     print('Make tilings...')
@@ -534,7 +537,9 @@ def spike_contrast(binary_firings : NDArray,
                    dt_max : float = None,
                    N_points : int = 100,
                    stride_bin_ratio : int = 2,
-                   plot : bool = False) -> Tuple[NDArray, NDArray, NDArray, NDArray]:
+                   plot : bool = False,
+                   err_estimate : bool = True) -> Tuple[NDArray, NDArray, NDArray, NDArray,
+                                                        Tuple[float, float], Tuple[float, float]]:
     '''
     Calculates the spike contrast from binary firing data of neurons. The function analyzes 
     the firing patterns over time and computes the spike contrast based on the temporal 
@@ -609,10 +614,19 @@ def spike_contrast(binary_firings : NDArray,
 
     spike_contrast = contrast * activeST
 
+    i_max = np.argmax(spike_contrast)
+    sc_max = spike_contrast[i_max]
+    dt_sc_max = dts[i_max]
+
     if plot:
         plot_spike_contrast(spike_contrast, contrast, activeST, dts)
 
-    return spike_contrast, contrast, activeST, dts
+    if err_estimate:
+        sc_err, dt_err = spike_contrast_error(spike_contrast, dts, plot=True)
+    else:
+        sc_err, dt_err = None, None
+
+    return spike_contrast, contrast, activeST, dts, (sc_max, sc_err), (dt_sc_max, dt_err)
 
 
 def plot_spike_contrast(spike_contrast : NDArray,
@@ -642,6 +656,60 @@ def plot_spike_contrast(spike_contrast : NDArray,
     axleft.legend(plots, labels)
 
     plt.show()
+
+
+def spike_contrast_error(sc : NDArray,
+                         dts : NDArray,
+                         fitrange : int = 30,
+                         degree : int = 2,
+                         plot : bool = False) -> Tuple[float, float]:
+    
+    i_max = np.argmax(sc)
+    dts_sliced = dts[i_max-fitrange:i_max+fitrange]
+    sc_sliced = sc[i_max-fitrange:i_max+fitrange]
+
+    p = np.polyfit(dts_sliced, sc_sliced, degree)
+    
+    residue = sc_sliced - np.polyval(p, dts_sliced)
+    SC_err = np.std(residue)
+    dt_err = SC_err / (np.sqrt(4*p[0]*(p[2]-sc[i_max])+p[1]**2))
+
+    if plot:
+        _, ax = plt.subplots()
+        ax.set_title('Error estimation of spike contrast')
+        ax.plot(dts, sc, c='r', alpha=.52)
+        ax.plot(dts_sliced, sc_sliced, c='r', label='data')
+        ax.plot(dts, np.polyval(p, dts), c='k', linestyle='--', label='fit')
+        ax.scatter(dts[i_max], sc[i_max], marker='x', c='k', zorder=100, label='spike contrast')
+
+        ax.set_xlim(np.min(dts), np.max(dts))
+        ax.set_xscale('log')
+        ax.set_xlabel(r'$\Delta t$', fontsize=15)
+
+        ax.set_ylim(0.9*np.min(sc), 1.1*np.max(sc))
+        ax.set_ylabel(r'SCP$(\Delta t)$, SCP$_{model}(\Delta t)$', fontsize=15)
+
+        ax.grid()
+
+        axins = ax.inset_axes([0.18, 0.13, 0.4, 0.4], xlim=(np.min(dts_sliced), np.max(dts_sliced)), ylim=(np.min(sc_sliced), np.max(sc_sliced)), xticklabels=[], yticklabels=[])
+        ax.indicate_inset_zoom(axins, edgecolor='k')
+        axins.plot(np.log(dts_sliced), np.abs(residue), c='r', label="Inset Plot")
+        axins.hlines(SC_err, np.min(np.log(dts_sliced)), np.max(np.log(dts_sliced)), color='g', linestyle='--')
+        axins.set_ylabel(r'$\left|\mathrm{SCP}_{model} - \mathrm{SCP}\right|$', fontsize=10, backgroundcolor='w')
+        axins.set_xlabel(r'$\Delta t$', fontsize=10, backgroundcolor='w')
+        axins.set_yticks([0, SC_err], ['', ''])
+        xmin, xmax = axins.set_xlim(np.min(np.log(dts_sliced)), np.max(np.log(dts_sliced)))
+        axins.set_ylim(0, 1.05*np.max(np.abs(residue)))
+        axins.text((xmin+xmax)/1.33, SC_err, r'$\sigma_{SC}$', c='g', verticalalignment='bottom', fontsize=13)
+        axins.set_xticklabels([])
+
+        plt.legend()
+        plt.tight_layout()
+        plt.savefig('C:\\Users\\bow-lab\\Documents\\Code\\figures\\error_estimate_spike_contrast.pdf')
+        plt.show()
+
+    return SC_err, dt_err
+
 
 
 

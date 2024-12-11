@@ -109,13 +109,15 @@ class MEAData():
         self.sim = None
         self.sttc_sim = None
         self.correlation = None
-        self.correlation_error = None
+        self.correlation_err = None
         self.SC = None
         self.contrast = None
         self.activeST = None
         self.SC_dts = None
         self.SC_max = None
+        self.SC_max_err = None
         self.SC_dt_max = None
+        self.SC_dt_max_err = None
         self.sttc_clustered = None
         self.cluster_labels = None
         self.cluster_centers = None
@@ -141,9 +143,11 @@ class MEAData():
         self.sim = self.data['sim']
         self.sttc_sim = self.data['sttc_sim']
         self.correlation = self.data['correlation']
-        self.correlation_error = self.data['correlation_error']
+        self.correlation_err = self.data['correlation_error']
         self.SC_max = self.data['SC_max']
+        self.SC_max_err = self.data['SC_max_err']
         self.SC_dt_max = self.data['SC_dt_max']
+        self.SC_dt_max_err = self.data['SC_dt_max_err']
         self.sttc_clustered = self.data['sttc_clustered']
         self.cluster_labels = self.data['cluster_labels']
         self.cluster_centers = self.data['cluster_centers']
@@ -764,7 +768,8 @@ class MEAData():
 
 
     def upper_triangle(self, data : NDArray) -> NDArray:
-        return data[np.triu_indices(np.shape(data)[0], k=1)]
+        result = data[np.triu_indices(np.shape(data)[0], k=1)]
+        return result[np.logical_not(np.isnan(result))]
 
 
     
@@ -814,8 +819,8 @@ class MEAData():
                                              pdf, cdf, pdf_sim, cdf_sim, plot_sim_hist)
                 
                 corr_j = self.get_correlation(method, pdf, stt._gauss_norm(bin_centers, *popt),
-                                                    cdf, stt._cum_gauss(bin_centers, *popt))
-                print(corr_j)
+                                                      cdf, stt._cum_gauss(bin_centers, *popt))
+
                 if j == 0:
                     corr_i = np.array([corr_j])
                 else:
@@ -830,12 +835,12 @@ class MEAData():
 
             if i == 0:
                 self.correlation = corr_mean
-                self.correlation_error = corr_err
+                self.correlation_err = corr_err
             else:
                 self.correlation = np.vstack((self.correlation, corr_mean))
-                self.correlation_error = np.vstack((self.correlation_error, corr_err))
+                self.correlation_err = np.vstack((self.correlation_err, corr_err))
    
-        return self.correlation, self.correlation_error
+        return self.correlation, self.correlation_err
 
  
     def plot_sttc_histogram(self, bin_centers_data : NDArray,
@@ -900,20 +905,22 @@ class MEAData():
                        dt_max : float = None,
                        N_points : int = 100,
                        stride_bin_ratio : int = 2,
-                       plot : bool = False) -> Tuple[float, float]:
+                       plot : bool = False,
+                       err_estimate : bool = True) -> Tuple[float, float, float, float]:
         
         if self.SC_max is not None:
             print('Warning: overwriting current spike contrast results')
         
-        self.SC, self.contrast, self.activeST, self.SC_dts = stt.spike_contrast(self.trains_binary,
-                                                                                self.sample_rate,
-                                                                                dt_min, dt_max, N_points,
-                                                                                stride_bin_ratio, plot)
+        self.SC, self.contrast, self.activeST, self.SC_dts, sc_max, sc_dt_max = stt.spike_contrast(self.trains_binary,
+                                                                                        self.sample_rate,
+                                                                                        dt_min, dt_max, N_points,
+                                                                                        stride_bin_ratio, plot,
+                                                                                        err_estimate)
         
-        self.SC_max = np.max(self.SC)
-        self.SC_dt_max = self.SC_dts[np.argmax(self.SC)]
+        self.SC_max, self.SC_max_err = sc_max[0], sc_max[1]
+        self.SC_dt_max, self.SC_dt_max_err = sc_dt_max[0], sc_dt_max[1]
 
-        return self.SC_max, self.SC_dt_max
+        return self.SC_max, self.SC_max_err, self.SC_dt_max, self.SC_dt_max_err
 
 
     def run_all(self) -> None:
@@ -953,9 +960,11 @@ class MEAData():
                 'sim'              :   self.sim,
                 'sttc_sim'         :   self.sttc_sim,
                 'correlation'      :   self.correlation,
-                'correlation_error':   self.correlation_error,
+                'correlation_err'  :   self.correlation_err,
                 'SC_max'           :   self.SC_max,
+                'SC_max_err'       :   self.SC_max_err,
                 'SC_dt_max'        :   self.SC_dt_max,
+                'SC_dt_max_err'    :   self.SC_dt_max_err,
                 'sttc_clustered'   :   self.sttc_clustered,
                 'cluster_labels'   :   self.cluster_labels,
                 'cluster_centers'  :   self.cluster_centers
@@ -984,12 +993,15 @@ class MEAData():
                 'sim'              :   self.sim,
                 'sttc_sim'         :   self.sttc_sim,
                 'correlation'      :   self.correlation,
+                'correlation_err'  :   self.correlation_err,
                 'SC'               :   self.SC,
                 'contrast'         :   self.contrast,
                 'activeST'         :   self.activeST,
                 'SC_dts'           :   self.SC_dts,
                 'SC_max'           :   self.SC_max,
+                'SC_max_err'       :   self.SC_max_err,
                 'SC_dt_max'        :   self.SC_dt_max,
+                'SC_dt_max_err'    :   self.SC_dt_max_err,
                 'sttc_clustered'   :   self.sttc_clustered,
                 'cluster_labels'   :   self.cluster_labels,
                 'cluster_centers'  :   self.cluster_centers
@@ -1007,9 +1019,11 @@ class MEAData():
                 'rate_total'       :   self.rate_total,
                 'time_rate_total'  :   self.time_rate_total,
                 'correlation'      :   self.correlation,
-                'correlation_error':   self.correlation_error,
+                'correlation_err'  :   self.correlation_err,
                 'SC_max'           :   self.SC_max,
-                'SC_dt_max'        :   self.SC_dt_max
+                'SC_max_err'       :   self.SC_max_err,
+                'SC_dt_max'        :   self.SC_dt_max,
+                'SC_dt_max_err'    :   self.SC_dt_max_err
                 }
         
         return results_dict
