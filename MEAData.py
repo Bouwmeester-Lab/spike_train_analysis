@@ -3,7 +3,10 @@
 
 import numpy as np
 import matplotlib.pyplot as plt
-import spike_train_tools as stt
+import spike_train_tools.tools as stt
+from spike_train_tools.dim_red import dim_red
+from spike_train_tools.sttc import STTC
+from spike_train_tools.spike_contrast import spike_contrast
 import pickle
 
 from typing import Tuple, Literal, List, Union, Any
@@ -29,7 +32,8 @@ class MEAData():
     def __init__(self, path : str,
                  file_type : Literal['raw', 'processed'],
                  overview : bool = True,
-                 pressure : float = None) -> None:
+                 pressure : float = None,
+                 pressure_err : float = None) -> None:
     
         self.file_type = file_type
 
@@ -39,6 +43,7 @@ class MEAData():
 
             self.file_ID = path.split('\\')[-2]
             self.pressure = pressure
+            self.pressure_err = pressure_err
 
             self.data = np.load(path, allow_pickle=True)
 
@@ -56,6 +61,7 @@ class MEAData():
             self.T_total = self.N_samples / self.sample_rate
 
             self.trains_binary = self.convert_trains_to_binary()
+            self.N_firings = np.sum(self.trains_binary)
 
             self.initialize_attributes()
 
@@ -109,7 +115,6 @@ class MEAData():
         self.sim = None
         self.sttc_sim = None
         self.correlation = None
-        self.correlation_err = None
         self.SC = None
         self.contrast = None
         self.activeST = None
@@ -131,6 +136,7 @@ class MEAData():
             return 
         
         self.pressure = self.data['pressure']
+        self.pressure_err = self.data['pressure_err']
         self.file_ID = self.data['file_ID']
         self.N_units = self.data['N_units']
         self.N_samples = self.data['N_samples']
@@ -138,12 +144,12 @@ class MEAData():
         self.sample_rate = self.data['sample_rate']
         self.locs = self.data['locs']
         self.trains = self.data['trains']
+        self.N_firings = self.data['N_firings']
         self.sttc = self.data['sttc']
         self.sttc_dt = self.data['sttc_dt']
         self.sim = self.data['sim']
         self.sttc_sim = self.data['sttc_sim']
         self.correlation = self.data['correlation']
-        self.correlation_err = self.data['correlation_error']
         self.SC_max = self.data['SC_max']
         self.SC_max_err = self.data['SC_max_err']
         self.SC_dt_max = self.data['SC_dt_max']
@@ -236,8 +242,8 @@ class MEAData():
 
 
 
-    def print_data_overview(self, spacing : int = 18,
-                            value_length : int = 140) -> None:
+    def print_data_overview(self, spacing : int = 20,
+                            value_length : int = 80) -> None:
         '''
         Prints an overview of the MEA data. 
         '''
@@ -347,7 +353,7 @@ class MEAData():
 
 
     def get_rate_total(self, window_size : float = 0.03,
-                       stride : int = None) -> Tuple[NDArray]:
+                       stride : Union[str, int] = 'auto') -> Tuple[NDArray]:
         '''
         Computes and returns the time-averaged total firing rate.
         
@@ -364,7 +370,7 @@ class MEAData():
             self.get_firings_total()
 
         window = self.sample_rate * window_size
-        if stride == None:
+        if stride == 'auto':
             stride = window / 20
         
         # get the total time array
@@ -413,7 +419,9 @@ class MEAData():
 
     def raster_plot(self, sort : bool = True,
                     plot_avg : bool = True,
-                    time_range : Tuple[float] = None) -> None:
+                    time_range : Tuple[float] = None,
+                    plot_save : bool = False,
+                    plot_save_name : str = 'C:\\Users\\bow-lab\\Documents\\Code\\figures\\rasterplot.pdf') -> None:
         '''
         Plots neuron activity over time, with options for sorted data and average firing rate.
         
@@ -435,15 +443,16 @@ class MEAData():
             self.get_rate_total()
 
         stt.raster_plot(plot_trains, self.sample_rate, plot_avg, 
-                        self.time_rate_total, self.rate_total, time_range)
+                        self.time_rate_total, self.rate_total, time_range,
+                        plot_save, plot_save_name)
 
 
 
 
     def get_rates(self, method : Literal['Direct', 'ISI'],
                   sigma : float = .05,
-                  kernel_size : float = None,
-                  stride : int = None,
+                  kernel_size : Union[Literal['auto'], float] = 'auto',
+                  stride : Union[Literal['auto'], int] = 'auto',
                   plot : bool = False,
                   plot_nrs : NDArray = range(0, 4),
                   time_range : Tuple[float] = [0, 5]) -> NDArray:
@@ -509,7 +518,7 @@ class MEAData():
             print('First calculate smoothened firing rates with get_avg_firing_rate()')
             return
         
-        components = stt.dim_red(self.rates, dimension, method, plot, ranges)
+        components = dim_red(self.rates, dimension, method, plot, ranges)
 
         return components
 
@@ -521,7 +530,9 @@ class MEAData():
                      plot : bool = False,
                      sort : bool = True,
                      tiling_method : Literal['fft', 'direct'] = 'direct',
-                     use_numba : bool = False) -> NDArray:
+                     use_numba : bool = False,
+                     plot_save : bool = False,
+                     plot_save_name : str = 'C:\\Users\\bow-lab\\Documents\\Code\\figures\\sttc.pdf') -> NDArray:
         '''
         Computes and returns the Spike Time Tiling Coefficient (STTC) for neuron pairs.
         
@@ -538,7 +549,7 @@ class MEAData():
             self.trains_binary = self.convert_trains_to_binary()
 
         if type(dt_max) == float and type(dt_min) == float:
-            self.sttc = stt.STTC(self.trains_binary, self.sample_rate,
+            self.sttc = STTC(self.trains_binary, self.sample_rate,
                              dt_max=dt_max, dt_min=dt_min, plot=plot,
                              sort=sort, tiling_method=tiling_method,
                              use_numba=use_numba)
@@ -549,10 +560,10 @@ class MEAData():
                 self.sttc = []
                 self.sttc_dt = []
                 for dtmin, dtmax in zip(dt_min, dt_max):
-                    self.sttc.append(stt.STTC(self.trains_binary, self.sample_rate,
-                                              dt_max=dtmax, dt_min=dtmin, plot=plot,
-                                              sort=sort, tiling_method=tiling_method,
-                                              use_numba=use_numba))
+                    self.sttc.append(STTC(self.trains_binary, self.sample_rate,
+                                          dt_max=dtmax, dt_min=dtmin, plot=plot,
+                                          sort=sort, tiling_method=tiling_method,
+                                          use_numba=use_numba, plot_save=plot_save, plot_save_name=plot_save_name))
                     self.sttc_dt.append((dtmin, dtmax))
             else:
                 print('dt_mins and dt_maxs do not have the same size')
@@ -629,7 +640,7 @@ class MEAData():
 
 
 
-    def get_STTC_clustered(self, plot : bool = True) -> NDArray:
+    def get_sttc_clustered(self, plot : bool = True) -> NDArray:
         if self.cluster_labels is None:
             self.get_clusters()
 
@@ -652,16 +663,16 @@ class MEAData():
                     self.sttc_clustered[j, i] = sttc_cluster
 
         if plot:
-            self.plot_STTC_clustered()
+            self.plot_sttc_clustered()
 
         return self.sttc_clustered
 
 
 
         
-    def plot_STTC_clustered(self):
+    def plot_sttc_clustered(self):
         if ( self.sttc_clustered is None ) or ( int(np.shape(self.sttc_clustered)[0]) != int(len(self.cluster_centers)) ):
-            self.get_STTC_clustered()
+            self.get_sttc_clustered()
 
         order = np.argsort(self.cluster_labels)
         sttc_result_ordered = self.sttc[order][:,order]
@@ -716,7 +727,7 @@ class MEAData():
 
         self.sim = stt.simulate_spiketrains(self.N_units, self.rates_avg, self.T_total, self.sample_rate)
         
-        self.sttc_sim = stt.STTC(self.sim, sample_rate=self.sample_rate, dt_max=dt_max, dt_min=dt_min, plot=False, use_numba=use_numba)
+        self.sttc_sim = STTC(self.sim, sample_rate=self.sample_rate, dt_max=dt_max, dt_min=dt_min, plot=False, use_numba=use_numba)
 
         return self.sim, self.sttc_sim
     
@@ -738,33 +749,19 @@ class MEAData():
     
 
     
-    def get_correlation(self, method : Literal['pdf_difference',
-                                               'Cramer-von Mises',
-                                               'Wasserstein',
-                                               'all'],
-                        pdf : NDArray = None, 
+    def get_correlation(self, pdf : NDArray = None, 
                         pdf_sim : NDArray = None, 
                         cdf : NDArray = None, 
-                        cdf_sim : NDArray = None) -> NDArray:
+                        cdf_sim : NDArray = None) -> Tuple[float, float, float]:
         
-        correlation = []
+        slice = (pdf_sim > pdf)
+        pdf_diff  = np.sum(np.abs(pdf_sim[slice] - pdf[slice]))
 
-        if method == 'pdf_difference' or method == 'all':
-            assert pdf is not None and pdf_sim is not None, 'pdf_difference method needs pdf and pdf_sim arguments'
-            slice = (pdf_sim > pdf)
-            correlation.append(np.sum(np.abs(pdf_sim[slice] - pdf[slice])))
+        cramer_vonmises = np.sum((cdf - cdf_sim)**2)
 
-        if method == 'Cramer-von Mises' or method == 'all':
-            assert cdf is not None and cdf_sim is not None, 'Cramer-von Mises method needs cdf and cdf_sim arguments'
-            correlation.append(np.sum((np.abs(cdf - cdf_sim)**2)))
-
-        if method == 'Wasserstein' or method == 'all':
-            assert cdf is not None and cdf_sim is not None, 'Wasserstein method needs cdf and cdf_sim arguments'
-            correlation.append(np.sum(np.abs(cdf - cdf_sim)))
-
-        correlation = np.array(correlation)
+        wasserstein = np.sum(np.abs(cdf - cdf_sim))
         
-        return correlation
+        return pdf_diff, cramer_vonmises, wasserstein
 
 
     def upper_triangle(self, data : NDArray) -> NDArray:
@@ -773,16 +770,15 @@ class MEAData():
 
 
     
-    def compare_STTC_to_random(self, bins_data : Union[int, str],
+    def compare_sttc_to_random(self, bins_data : Union[int, str],
                                bins_sim : Union[int, str],
                                plot : bool = True,
-                               method : Literal['pdf_difference',
-                                                'Cramer-von Mises',
-                                                'Wasserstein',
-                                                'all'] = 'Wasserstein',
-                               n_splits : int = 1,
+                               n_splits : Union[Literal['auto'], int] = 'auto',
+                               min_samples_per_hist : int = 1000,
                                plot_sim_hist : bool = False,
-                               use_numba : bool = False) -> NDArray:
+                               use_numba : bool = False,
+                               plot_save : bool = False,
+                               plot_save_name : str = 'C:\\Users\\bow-lab\\Documents\\Code\\figures\\sttc_histogram.pdf') -> dict:
     
         if self.sttc is None:
             print('Compute STTC on data with dt_max = 0.05...')
@@ -796,8 +792,15 @@ class MEAData():
 
         dt_mins = [dt[0] for dt in dts]
         dt_maxs = [dt[1] for dt in dts]
+
+        self.correlation = []
+
+        if n_splits == 'auto':
+            n_splits = max([1, min([int(self.N_units*(self.N_units-1)/2 / min_samples_per_hist), 16])])
+
+        print(f'Splitting data in {n_splits} subsets for error estimation')
  
-        for i, (dt_min, dt_max, sttc) in enumerate(zip(dt_mins, dt_maxs, sttcs)):
+        for dt_min, dt_max, sttc in zip(dt_mins, dt_maxs, sttcs):
             data = self.upper_triangle(sttc)
 
             _, sttc_sim = self.compute_sttc_sim(dt_max, dt_min, use_numba=use_numba)
@@ -810,37 +813,52 @@ class MEAData():
             np.random.shuffle(data)
             splits = np.array_split(data, n_splits)
 
-            for j, split in enumerate(splits):
+            pdf_diffs = []
+            cramers = []
+            wassersteins = []
+
+            N_bins = []
+
+            for split in splits:
                 pdf, bin_centers, bin_size = self.get_pdf(split, bins_data)
+                N_bins.append(len(bin_centers))
                 cdf = np.cumsum(pdf) * bin_size
         
                 if plot:
                     self.plot_sttc_histogram(bin_centers, bin_centers_sim, popt, err,
-                                             pdf, cdf, pdf_sim, cdf_sim, plot_sim_hist)
+                                             pdf, cdf, pdf_sim, cdf_sim, plot_sim_hist,
+                                             plot_save, plot_save_name)
                 
-                corr_j = self.get_correlation(method, pdf, stt._gauss_norm(bin_centers, *popt),
-                                                      cdf, stt._cum_gauss(bin_centers, *popt))
+                pdf_diff, cramer, wasserstein = self.get_correlation(pdf, stt._gauss_norm(bin_centers, *popt),
+                                                                              cdf, stt._cum_gauss(bin_centers, *popt))
+                
+                pdf_diffs.append(pdf_diff)
+                cramers.append(cramer)
+                wassersteins.append(wasserstein)
 
-                if j == 0:
-                    corr_i = np.array([corr_j])
-                else:
-                    corr_i = np.vstack((corr_i, corr_j))
+            print(f'Number of bins: {' '.join([str(x) for x in N_bins])}')
+            print()
 
-            if n_splits > 1:
-                corr_mean = np.mean(corr_i, axis=0)
-                corr_err = np.std(corr_i, axis=0)
-            else:
-                corr_mean = corr_i
-                corr_err = np.full_like(corr_i, None)
+            pdf_diff_final = np.mean(pdf_diffs)
+            cramer_final = np.mean(cramers)
+            wasserstein_final = np.mean(wassersteins)
 
-            if i == 0:
-                self.correlation = corr_mean
-                self.correlation_err = corr_err
-            else:
-                self.correlation = np.vstack((self.correlation, corr_mean))
-                self.correlation_err = np.vstack((self.correlation_err, corr_err))
+            pdf_diff_err = np.std(pdf_diffs)
+            cramer_err = np.std(cramers)
+            wasserstein_err = np.std(wassersteins)
+
+            results = {'dt_min'                 : dt_min,
+                       'dt_max'                 : dt_max,
+                       'pdf_difference'         : pdf_diff_final,
+                       'pdf_difference_err'     : pdf_diff_err,
+                       'Cramer-Von Mises'       : cramer_final,
+                       'Cramer-Von Mises_err'   : cramer_err,
+                       'Wasserstein'            : wasserstein_final,
+                       'Wasserstein_err'        : wasserstein_err}
+            
+        self.correlation.append(results)
    
-        return self.correlation, self.correlation_err
+        return self.correlation
 
  
     def plot_sttc_histogram(self, bin_centers_data : NDArray,
@@ -851,7 +869,9 @@ class MEAData():
                             counts_cum : NDArray,
                             counts_sim_norm : NDArray,
                             counts_sim_cum : NDArray,
-                            plot_sim_hist : bool) -> None:
+                            plot_sim_hist : bool,
+                            plot_save : bool = False,
+                            plot_save_name : str = 'C:\\Users\\bow-lab\\Documents\\Code\\figures\\sttc_histogram.pdf') -> None:
         
         bin_size_data = np.mean(np.diff(bin_centers_data))
         bin_min_data, bin_max_data = bin_centers_data[0]-bin_size_data/2, bin_centers_data[-1]+bin_size_data/2
@@ -867,37 +887,45 @@ class MEAData():
         cum_gauss = stt._cum_gauss(bin_centers_data, *popt)
 
         _, axs = plt.subplots(1, 2, figsize=(12, 5))
-        plt.suptitle(f'Xenon pressure: {self.pressure} psi')
+        plt.suptitle(f'Comparing the distribution of the STTC to a random simulation', fontsize=23)
 
         if plot_sim_hist:
             axs[0].bar(bin_centers_sim, counts_sim_norm, width=bin_size_sim, color='white', edgecolor='k', alpha=.5, label='Poisson')
             axs[1].bar(bin_centers_sim, counts_sim_cum, width=bin_size_sim, color='white', edgecolor='k', alpha=.5, label='random sim')
 
-        axs[0].set_title('pdf')
+        #axs[0].set_title('pdf')
         axs[0].bar(bin_centers_data, counts_norm, width=bin_size_data, color='r', edgecolor='k', alpha=.5, label='data')
-        axs[0].plot(bin_continuous, gauss_cont, c='k', linestyle='--', label='fit')
+        axs[0].plot(bin_continuous, gauss_cont, c='k', linestyle='--', label='simulation')
         axs[0].fill_between(bin_centers_data, stt._gauss_norm(bin_centers_data, *popt), counts_norm, where=(counts_norm > stt._gauss_norm(bin_centers_data, *popt)), 
-                color='b', alpha=.3, label='correlation')
-        axs[0].set_ylabel('Probability density')
-        axs[0].text(.96*bin_max_data, .7 / np.sqrt(2*np.pi*popt[1]**2),
-                    f'µ = {popt[0]:.4f} ± {err[0]:.4f}\nσ = {popt[1]:.4f} ± {err[1]:.4f}', 
-                    horizontalalignment='right', verticalalignment='center',
-                    bbox=dict(boxstyle='round', facecolor='white', alpha=0.5))
-        axs[0].legend()
+                color='b', alpha=.3, label='difference')
+        axs[0].set_ylabel('Probability density', fontsize=17)
+        #axs[0].text(.96*bin_max_data, .7 / np.sqrt(2*np.pi*popt[1]**2),
+        #            f'µ = {popt[0]:.4f} ± {err[0]:.4f}\nσ = {popt[1]:.4f} ± {err[1]:.4f}', 
+        #            horizontalalignment='right', verticalalignment='center',
+        #            bbox=dict(boxstyle='round', facecolor='white', alpha=0.5), fontsize=18)
+        print(popt, err)
+        axs[0].legend(fontsize=17)
 
-        axs[1].set_title('cdf')
+        #axs[1].set_title('cdf')
         axs[1].fill_between(bin_centers_data, counts_cum, cum_gauss, where=(cum_gauss > counts_cum), 
                 color='b', alpha=0.3)
         axs[1].fill_between(bin_centers_data, counts_cum, cum_gauss, where=(cum_gauss <= counts_cum), 
                 color='b', alpha=0.3)
         axs[1].bar(bin_centers_data, counts_cum, width=bin_size_data, color='r', edgecolor='k', alpha=.5, label='data')
-        axs[1].plot(bin_continuous, cum_gauss_cont, c='k', linestyle='--', label='fit')
-        axs[1].set_ylabel('Cumulative probability density')
+        axs[1].plot(bin_continuous, cum_gauss_cont, c='k', linestyle='--', label='simulation')
+        axs[1].set_ylabel('Cumulative probability density', fontsize=17)
         
 
         for ax in axs:
-            ax.set_xlabel('STTC [-]')
+            ax.set_xlabel('STTC [-]', fontsize=17)
             ax.set_xlim(bin_min_data, bin_max_data)
+            ax.xaxis.set_tick_params(labelsize=15)
+            ax.yaxis.set_tick_params(labelsize=15)
+
+        if plot_save:
+            plt.tight_layout()
+            plt.savefig(plot_save_name)
+
         plt.show()
 
 
@@ -906,16 +934,19 @@ class MEAData():
                        N_points : int = 100,
                        stride_bin_ratio : int = 2,
                        plot : bool = False,
-                       err_estimate : bool = True) -> Tuple[float, float, float, float]:
+                       err_estimate : bool = True,
+                       err_fitrange : int = 10,
+                       err_fitdegree : int = 2,
+                       err_plot : bool = False) -> Tuple[float, float, float, float]:
         
         if self.SC_max is not None:
             print('Warning: overwriting current spike contrast results')
         
-        self.SC, self.contrast, self.activeST, self.SC_dts, sc_max, sc_dt_max = stt.spike_contrast(self.trains_binary,
-                                                                                        self.sample_rate,
-                                                                                        dt_min, dt_max, N_points,
-                                                                                        stride_bin_ratio, plot,
-                                                                                        err_estimate)
+        self.SC, self.contrast, self.activeST, self.SC_dts, sc_max, sc_dt_max = spike_contrast(self.trains_binary,
+                                                                                               self.sample_rate,
+                                                                                               dt_min, dt_max, N_points,
+                                                                                               stride_bin_ratio, plot,
+                                                                                               err_estimate, err_fitrange, err_fitdegree, err_plot)
         
         self.SC_max, self.SC_max_err = sc_max[0], sc_max[1]
         self.SC_dt_max, self.SC_dt_max_err = sc_dt_max[0], sc_dt_max[1]
@@ -935,11 +966,11 @@ class MEAData():
         if self.sttc is None:
             self.compute_sttc()
         if self.sttc_clustered is None:
-            self.get_STTC_clustered()
+            self.get_sttc_clustered()
         if self.sim is None:
             self.compute_sttc_sim()
         if self.sttc_sim is None or self.correlation is None:
-            self.compare_STTC_to_random(plot=False, method='all')
+            self.compare_sttc_to_random(plot=False, method='all')
 
 
     def convert_results_to_dict(self,
@@ -948,6 +979,7 @@ class MEAData():
             results_dict = {
                 'mode'             :   mode,
                 'pressure'         :   self.pressure,
+                'pressure_err'     :   self.pressure_err,
                 'file_ID'          :   self.file_ID,
                 'N_units'          :   self.N_units,
                 'N_samples'        :   self.N_samples,
@@ -955,12 +987,13 @@ class MEAData():
                 'sample_rate'      :   self.sample_rate,
                 'locs'             :   self.locs,
                 'trains'           :   self.trains,
+                'rate_total'       :   self.rate_total,
+                'N_firings'        :   self.N_firings,
                 'sttc'             :   self.sttc,
                 'sttc_dt'          :   self.sttc_dt,
                 'sim'              :   self.sim,
                 'sttc_sim'         :   self.sttc_sim,
                 'correlation'      :   self.correlation,
-                'correlation_err'  :   self.correlation_err,
                 'SC_max'           :   self.SC_max,
                 'SC_max_err'       :   self.SC_max_err,
                 'SC_dt_max'        :   self.SC_dt_max,
@@ -974,6 +1007,7 @@ class MEAData():
             results_dict = {
                 'mode'             :   mode,
                 'pressure'         :   self.pressure,
+                'pressure_err'     :   self.pressure_err,
                 'file_ID'          :   self.file_ID,
                 'N_units'          :   self.N_units,
                 'N_samples'        :   self.N_samples,
@@ -982,6 +1016,7 @@ class MEAData():
                 'locs'             :   self.locs,
                 'trains'           :   self.trains,
                 'trains_binary'    :   self.trains_binary,
+                'N_firings'        :   self.N_firings,
                 'firings_total'    :   self.firings_total,
                 'rate_total'       :   self.rate_total,
                 'time_rate_total'  :   self.time_rate_total,
@@ -993,7 +1028,6 @@ class MEAData():
                 'sim'              :   self.sim,
                 'sttc_sim'         :   self.sttc_sim,
                 'correlation'      :   self.correlation,
-                'correlation_err'  :   self.correlation_err,
                 'SC'               :   self.SC,
                 'contrast'         :   self.contrast,
                 'activeST'         :   self.activeST,
@@ -1011,15 +1045,17 @@ class MEAData():
             results_dict = {
                 'mode'             :   mode,
                 'pressure'         :   self.pressure,
+                'pressure_err'     :   self.pressure_err,
                 'file_ID'          :   self.file_ID,
                 'N_units'          :   self.N_units,
                 'N_samples'        :   self.N_samples,
                 'T_total'          :   self.T_total,
+                'N_firings'        :   self.N_firings,
                 'sample_rate'      :   self.sample_rate,
                 'rate_total'       :   self.rate_total,
                 'time_rate_total'  :   self.time_rate_total,
                 'correlation'      :   self.correlation,
-                'correlation_err'  :   self.correlation_err,
+                'sttc_dt'          :   self.sttc_dt,
                 'SC_max'           :   self.SC_max,
                 'SC_max_err'       :   self.SC_max_err,
                 'SC_dt_max'        :   self.SC_dt_max,

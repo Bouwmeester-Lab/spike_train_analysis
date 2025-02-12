@@ -1,0 +1,38 @@
+{
+    "get_rate_total": {
+        "window_size": 0.03,
+        "stride": null
+    },
+    "get_rates": {
+        "method": "ISI",
+        "sigma": 0.05,
+        "kernel_size": "auto",
+        "stride": "auto"
+    },
+    "compute_sttc": {
+        "dt_max": [0.3],
+        "dt_min": [0],
+        "tiling_method": "direct",
+        "use_numba": true
+    },
+    "compare_sttc_to_random": {
+        "bins_data": "auto",
+        "bins_sim": "auto",
+        "n_splits": "auto",
+        "min_samples_per_hist": 1000,
+        "use_numba": true 
+    },
+    "spike_contrast": {
+        "dt_min": 0.001,
+        "dt_max": 5,
+        "N_points": 100,
+        "stride_bin_ratio": 2,
+        "err_estimate": true,
+        "err_fitrange": 5,
+        "err_fitdegree": 2
+    },
+    "general": {
+        "overview": true,
+        "saving_mode": "condensed"
+    }
+}
