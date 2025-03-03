@@ -854,7 +854,9 @@ class MEAData():
                        'Cramer-Von Mises'       : cramer_final,
                        'Cramer-Von Mises_err'   : cramer_err,
                        'Wasserstein'            : wasserstein_final,
-                       'Wasserstein_err'        : wasserstein_err}
+                       'Wasserstein_err'        : wasserstein_err,
+                       'STTC_avg'               : np.nanmean(self.upper_triangle(sttc)),
+                       'STTC_std'               : np.nanstd(self.upper_triangle(sttc))}
             
         self.correlation.append(results)
    

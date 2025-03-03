@@ -22,7 +22,7 @@ def activity(trains : NDArray) -> NDArray:
     Returns:
     - activities (NDArray) : array of average magnetizations of size (N_neurons)
     '''
-    activities = np.average(trains, axis=1)
+    activities = np.sum(trains, axis=1)/np.shape(trains)[1]
     return activities
 
 
@@ -70,7 +70,7 @@ def ising_hamiltonian(state : NDArray,
 
 
 @jit
-def metropolis_step(state : NDArray,
+def metropolis_step(states : NDArray,
                     energy : float,
                     h : NDArray,
                     J : NDArray,
@@ -89,26 +89,29 @@ def metropolis_step(state : NDArray,
     - energy_new    (float)   : energy of the state
     '''
     # pick a random firing event
-    N_neurons = int(len(state))
-    i = np.random.randint(0, N_neurons)
+    N_neurons = int(len(states))
+    for j in range(N_neurons):
+        i = np.random.randint(0, N_neurons)
 
-    # flip a 0 to a 1 and vice versa
-    state_new = np.copy(state)
-    state_new[i] = -1*state[i]
+        # flip a 0 to a 1 and vice versa
+        state_new = np.copy(states)
+        state_new[i] = -1*states[i]
 
-    #calculate the change in energy due to the flip
-    energy = ising_hamiltonian(state, h, J)
-    energy_new = ising_hamiltonian(state_new, h, J)
-    dE = energy_new - energy
+        #calculate the change in energy due to the flip
+        energy = ising_hamiltonian(states, h, J)
+        energy_new = ising_hamiltonian(state_new, h, J)
+        dE = energy_new - energy
 
-    if dE < 0:
-        return state_new, energy_new
-    elif dE >= 0:
-        a = np.random.random()
-        if a < np.exp(-1*dE / T):
-            return state_new, energy_new
-        else:
-            return state, energy
+        if dE < 0:
+            states, energy = state_new, energy_new
+        elif dE >= 0:
+            a = np.random.random()
+            if a < np.exp(-1*dE / T):
+                states, energy = state_new, energy_new
+            else:
+                states, energy = states, energy
+
+    return states, energy
         
 
 
@@ -240,7 +243,6 @@ def fit_ising(trains_observations : NDArray,
 
         h_eta = h_learning_rate*n**(h_learning_rate_scaling)
         J_eta = J_learning_rate*n**(J_learning_rate_scaling)
-
         activity_MC = activity(trains)
         covariance_MC = covariance(trains)
         
@@ -264,3 +266,46 @@ def fit_ising(trains_observations : NDArray,
             'cov_err'  :   covariance_errors}
 
     return h, J, info
+
+
+
+def plot_fit_results(h, J, info):
+    fig, axs = plt.subplots(4, 2, figsize=(12, 16))
+
+    axs[0,0].hist(h, bins=20, color='k')
+    axs[0,0].set_xlabel(r'$h_i$')
+    axs[0,0].set_ylabel('Counts')
+
+    axs[0,1].hist(J[np.triu_indices(np.shape(J)[0], k=1)], bins=20, color='k')
+    axs[0,1].set_xlabel(r'$J_{ij}$')
+    axs[0,1].set_ylabel('Counts')
+
+    axs[1,0].plot(info['h_mean'], c='k')
+    axs[1,0].set_xlabel('Iterations')
+    axs[1,0].set_ylabel(r'$\langle h_i\rangle$')
+
+    axs[1,1].plot(info['J_mean'], c='k')
+    axs[1,1].set_xlabel('Iterations')
+    axs[1,1].set_ylabel(r'$\langle J_{ij}\rangle$')
+
+    axs[2,0].plot(info['h_std'], c='k')
+    axs[2,0].set_xlabel('Iterations')
+    axs[2,0].set_ylabel(r'$\sigma_{h}$')
+
+    axs[2,1].plot(info['J_std'], c='k')
+    axs[2,1].set_xlabel('Iterations')
+    axs[2,1].set_ylabel(r'$\sigma_J$')
+
+    axs[3,0].plot(info['act_err'], c='k')
+    axs[3,0].set_xlabel('Iterations')
+    axs[3,0].set_ylabel('activity error')
+
+    axs[3,1].plot(info['cov_err'], c='k')
+    axs[3,1].set_xlabel('Iterations')
+    axs[3,1].set_ylabel('covariance error')
+
+    for row in axs:
+        for ax in row:
+            ax.grid(True)
+
+    plt.show()

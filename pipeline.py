@@ -159,22 +159,30 @@ def parse_pressure_log(file_path : str,
 
 
 def main() -> None:
-    base_folder = 'C:\\Users\\bow-lab\\Documents\\Code\\data\\ABAB'
+    base_folder = 'C:\\Users\\bow-lab\\Documents\\Code\\data\\'
     config_file = 'C:\\Users\\bow-lab\\Documents\\Code\\spike_train_analysis\\config.json'
-    measurements = [{'measurement_ID'  : 'AB_organoid',
-                     'chip_IDs'         : ['MEA'],
-                     'trials'           : ['A_1', 'B_1']}]
+    measurements = [{'measurement_ID'  : 'Natural Xenon',
+                     'chip_IDs'         : ['24039'],
+                     'trials'           : ['trial 1', 'trial 2']}]
 
     for measurement in measurements:
         id = measurement['measurement_ID']
 
-        pressures = parse_pressure_log(f'{base_folder}\\{id}\\pressures.txt', trials=measurement['trials'])
+        pressures = {'trial 1'  :   {'index'  : [],
+                                     'median' : [],
+                                     'mean'   : [2.14, 4.44, 6.54, 8.56, 10.18, 11.75, 16.02, 18.03, 20.12],
+                                     'std'    : [0,0,0,0,0,0,0,0,0]},
+                    'trial 2'   :   {'index'  : [],
+                                     'median' : [],
+                                     'mean'   : [0,    2.17, 4.29, 4.29, 6.33, 9.09, 10.16, 14.09, 16.12, 18.00, 20.0],
+                                     'std'    : [0,0,0,0,0,0,0,0,0,0,0]}}
+
 
         for chip_id in measurement['chip_IDs']:
             for trial in measurement['trials']:
                 print_header(id, chip_id, trial)
 
-                input_folders = f'{base_folder}\\{id}\\{chip_id}\\{trial}\\chunk*'
+                input_folders = f'{base_folder}\\{id}\\{chip_id}\\{trial}\\000*'
                 print(input_folders)
                 input_files = glob.glob(input_folders)
                 input_files = [file + '\\sorted.npz' for file in input_files]
@@ -183,7 +191,7 @@ def main() -> None:
                 for file in input_files:
                     print(file)
 
-                output_file = f'C:\\Users\\bow-lab\\Documents\\Code\\results\\ABAB\\{id}\\results_{chip_id}\\results_{trial}.pkl'
+                output_file = f'C:\\Users\\bow-lab\\Documents\\Code\\results\\{id}\\results_{chip_id}\\results_{trial}.pkl'
                 print(f'output_file:\n {output_file}')
 
                 pipe(pressures[trial]['mean'], pressures[trial]['std'],

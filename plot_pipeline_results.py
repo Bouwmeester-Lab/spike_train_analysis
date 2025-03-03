@@ -10,7 +10,8 @@ plt.rc('mathtext', fontset='cm')
 
 def summarize_pipeline_results(files : Union[str, list],
                                runs : Union[str, list] = None,
-                               correlation_plot : Literal['pdf_difference','Cramer-Von Mises','Wasserstein'] = 'Wasserstein'):
+                               correlation_plot : Literal['pdf_difference','Cramer-Von Mises','Wasserstein'] = 'Wasserstein',
+                               title : str = 'Effects of Xe-129 and Xe-130 isotopes'):
     
     if runs == None:
         runs = []
@@ -18,6 +19,8 @@ def summarize_pipeline_results(files : Union[str, list],
             runs.append(file.split('\\')[-1])
     
     _, axs = plt.subplots(6, 2, figsize=(18, 24), sharex=True)
+    plt.subplots_adjust(wspace=0.18, hspace=0.03)
+    plt.suptitle(title, fontsize=20, y=.92)
 
     colors = ['r', 'g', 'b', 'orange']
     markers = ['s']*4
@@ -139,16 +142,17 @@ def summarize_pipeline_results(files : Union[str, list],
 def summarize_pipeline_results2(files : Union[str, list],
                                runs : Union[str, list] = None,
                                correlation_plot : Literal['pdf_difference','Cramer-Von Mises','Wasserstein'] = 'Wasserstein',
-                               savefile : str = 'C:\\Users\\bow-lab\\Documents\\Code\\figures\\pipeline_results.pdf'):
+                               savefile : str = 'C:\\Users\\bow-lab\\Documents\\Code\\figures\\pipeline_results.pdf',
+                               title : str = 'Anesthetic effect of Xe-129 and Xe-130'):
     
     if runs == None:
         runs = []
         for file in files:
             runs.append(file.split('\\')[-1])
     
-    _, axs = plt.subplots(3, 2, figsize=(18, 18), sharex=True)
+    _, axs = plt.subplots(4, 2, figsize=(18, 18), sharex=True)
     plt.subplots_adjust(wspace=0.18, hspace=0.03)
-    plt.suptitle('Effects of Xe-129 and Xe-130 isotopes on organoids', fontsize=20, y=.92)
+    plt.suptitle(title, fontsize=20, y=.9)
 
     colors = ['r', 'g', 'b', 'orange']
     markers = ['s', '^', 's', '^']
@@ -167,6 +171,8 @@ def summarize_pipeline_results2(files : Union[str, list],
             rates = np.array([])
             corr = np.array([])
             corr_err = np.array([])
+            sttc_avg = []
+            sttc_std = []
             sttc_dts = []
             sc = []
             sc_err = []
@@ -183,6 +189,8 @@ def summarize_pipeline_results2(files : Union[str, list],
 
                 corr = np.append(corr, d['correlation'][0][correlation_plot])
                 corr_err = np.append(corr_err, d['correlation'][0][correlation_plot+'_err'])
+                sttc_avg.append(d['correlation'][0]['STTC_avg'])
+                sttc_std.append(d['correlation'][0]['STTC_std'])
                 sttc_dts.append(d['sttc_dt'])
 
                 sc.append(d['SC_max'])
@@ -191,7 +199,7 @@ def summarize_pipeline_results2(files : Union[str, list],
                 dt_err.append(d['SC_dt_max_err'])
 
 
-        axs[0,0].set_ylabel('Number of units', fontsize=14)           
+        axs[0,0].set_ylabel('Number of neurons', fontsize=14)           
         axs[0,0].errorbar(pressures, N_units, xerr=pressure_err,
                           label=run, color=c, marker=m, elinewidth=elinewidth)
 
@@ -205,20 +213,27 @@ def summarize_pipeline_results2(files : Union[str, list],
         axs[1,0].errorbar(pressures, rates, xerr=pressure_err,
                           label=run, color=c, marker=m, elinewidth=elinewidth)
         
-        axs[1,1].set_ylabel(f'Correlation [-]', fontsize=14)
+        axs[1,1].set_ylabel('Cramér-von Mises correlation [-]', fontsize=14)
         axs[1,1].errorbar(pressures, corr, xerr=pressure_err, yerr=corr_err,
                           color=c, marker=m, elinewidth=elinewidth)
-        print(corr_err)
-
-        axs[2,0].set_ylabel('Spike contrast [-]', fontsize=14)
-        axs[2,0].errorbar(pressures, sc, xerr=pressure_err, yerr=sc_err,
-                          label=run, color=c, marker=m, elinewidth=elinewidth)
-        axs[2,0].set_xlabel('Pressure [bar]', fontsize=14)
         
-        axs[2,1].set_ylabel(r'$\Delta t_{SC}$ [s]', fontsize=14)
-        axs[2,1].errorbar(pressures, dt, xerr=pressure_err, yerr=dt_err,
+        axs[2,0].set_ylabel('Average STTC [-]', fontsize=14)
+        axs[2,0].errorbar(pressures, sttc_avg, xerr=pressure_err,
+                          color=c, marker=m, elinewidth=elinewidth)
+        
+        axs[2,1].set_ylabel('STTC standard deviation [-]', fontsize=14)
+        axs[2,1].errorbar(pressures, sttc_std, xerr=pressure_err,
+                          color=c, marker=m, elinewidth=elinewidth)
+
+        axs[3,0].set_ylabel('Spike-Contrast [-]', fontsize=14)
+        axs[3,0].errorbar(pressures, sc, xerr=pressure_err, yerr=sc_err,
                           label=run, color=c, marker=m, elinewidth=elinewidth)
-        axs[2,1].set_xlabel('Pressure [bar]', fontsize=14)
+        axs[3,0].set_xlabel('Pressure [bar]', fontsize=14)
+        
+        axs[3,1].set_ylabel(r'$\Delta t_{SC}$ [s]', fontsize=14)
+        axs[3,1].errorbar(pressures, dt, xerr=pressure_err, yerr=dt_err,
+                          label=run, color=c, marker=m, elinewidth=elinewidth)
+        axs[3,1].set_xlabel('Pressure [bar]', fontsize=14)
     
     
 
@@ -237,7 +252,7 @@ def summarize_pipeline_results2(files : Union[str, list],
 if __name__ == '__main__':
     import glob
 
-    folders = ['C:\\Users\\bow-lab\\Documents\\Code\\results\\ABAB\\AB_organoid\\results_MEA\\results_*.pkl']
+    folders = ['C:\\Users\\bow-lab\\Documents\\Code\\results\\Natural Xenon\\results_24039\\results_*.pkl']
     
     for folder in folders:
         files = glob.glob(folder)
@@ -248,6 +263,10 @@ if __name__ == '__main__':
 
         #files = [files[0], files[2], files[1], files[3]]
 
-        runs = ['A', 'B']
+        runs = ['Trial 1', 'Trial 2']
 
-        summarize_pipeline_results2(files, runs, 'Cramer-Von Mises', savefile=f'C:\\Users\\bow-lab\\Documents\\Code\\figures\\pipeline_{folder.split('\\')[-2]}.pdf')
+        summarize_pipeline_results2(files, runs, 'Cramer-Von Mises',
+                                    savefile=f'C:\\Users\\bow-lab\\Documents\\Code\\figures\\pipeline_{folder.split('\\')[-2]}.pdf',
+                                    title='Anaesthetic effects natural Xenon on primary culture')
+        
+        

@@ -10,7 +10,7 @@
         "stride": "auto"
     },
     "compute_sttc": {
-        "dt_max": [0.3],
+        "dt_max": [0.02],
         "dt_min": [0],
         "tiling_method": "direct",
         "use_numba": true
